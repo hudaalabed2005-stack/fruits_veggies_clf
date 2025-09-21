@@ -1,12 +1,3 @@
-# ------------------------------ server.py -----------------------------------
-# Cloud backend for your Fruit (Roboflow) + MQ-135 project.
-# - /predict : send an image (file or webcam snapshot) -> Roboflow model JSON
-# - /gas     : send gas reading (vrl or adc) -> compute ppm + store "last"
-# - /status  : raw latest vision + gas
-# - /summary : human-friendly decision from both
-# - /        : simple UI (Upload tab + Webcam tab + Gas test + Summary)
-# ---------------------------------------------------------------------------
-
 import os
 from datetime import datetime
 
@@ -369,4 +360,3 @@ setInterval(refresh, 2000);  // auto-update every 2s
 </body>
 </html>
     """
-# ---------------------------- end server.py ----------------------------------
