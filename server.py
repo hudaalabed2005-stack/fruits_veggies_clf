@@ -70,11 +70,13 @@ def _ppm_from_ratio(ratio: float, a: float, b: float) -> float:
         return 0.0
     return max(0.0, a * (ratio ** b))
 
+from datetime import timedelta
+
 @app.post("/gas")
 def gas(g: GasReading):
     """
     Accept gas info from ESP32/UNO (or the manual UI),
-    compute Rs/ratio/ppm, cache it, and append to 2-day history.
+    compute Rs/ratio/ppm, update LAST and append to HISTORY.
     """
     VREF = g.vref or 3.3
     RL   = g.rl or 10000.0
@@ -89,7 +91,7 @@ def gas(g: GasReading):
 
     # Rs from divider if not provided
     rs = g.rs if g.rs is not None else ((VREF - g.vrl) * RL) / max(0.001, g.vrl)
-    r0 = g.r0 or rs
+    r0 = g.r0 or rs                      # if unknown, treat current as baseline
     ratio = rs / max(1e-6, r0)
 
     data = {
@@ -98,7 +100,6 @@ def gas(g: GasReading):
         "r0": round(r0, 1),
         "ratio": round(ratio, 3),
         "ppm": {
-            # Ballpark MQ-135 curves — tune with calibration.
             "co2":     round(_ppm_from_ratio(ratio, 116.6021, -2.7690), 1),
             "nh3":     round(_ppm_from_ratio(ratio, 102.6940, -2.4880), 1),
             "benzene": round(_ppm_from_ratio(ratio, 76.63,   -2.1680), 1),
@@ -106,28 +107,19 @@ def gas(g: GasReading):
         },
     }
 
-    # cache latest
+
     LAST["gas"] = data
     LAST["gas_updated"] = datetime.utcnow().isoformat()
 
-    # save to history (keep only 2 days)
     now_iso = datetime.utcnow().isoformat()
     HISTORY.append({"time": now_iso, "ppm": data["ppm"]})
+
+    # keep only last 2 days
     cutoff = datetime.utcnow() - timedelta(days=2)
     HISTORY[:] = [h for h in HISTORY if datetime.fromisoformat(h["time"]) >= cutoff]
 
     return {"ok": True, "data": data}
 
-# -------- Status / History ----------
-@app.get("/status")
-def status():
-    """Raw objects (handy for debugging)."""
-    return {
-        "vision": LAST["vision"],
-        "vision_updated": LAST["vision_updated"],
-        "gas": LAST["gas"],
-        "gas_updated": LAST["gas_updated"],
-    }
 
 @app.get("/history")
 def history():
