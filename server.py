@@ -432,24 +432,24 @@ def ui():
         <p>Simple, clear interface — upload, predict, and view gas-based decision</p>
     </header>
 
-    <div class="container">
-        <!-- Vision card -->
-        <div class="card">
-            <h2>1) Upload or Capture Fruit Image</h2>
-            <div class="row">
-                <input id="file" type="file" accept="image/*" />
-                <button onclick="predictFile()">Predict</button>
-                <button class="secondary" onclick="startCam()">Use Webcam</button>
-                <button class="gray" onclick="snap()">Snapshot</button>
-                <button class="gray" onclick="stopCam()">Stop Camera</button>
-                <button class="gray" onclick="clearVision()">Clear Image</button>
-            </div>
-            <video id="video" autoplay playsinline width="320" height="240" style="display:none;background:#000"></video>
-            <canvas id="canvas" width="320" height="240" style="display:none"></canvas>
-            <img id="preview" alt="preview" />
-            <div id="visionTop" class="big"></div>
-            <span id="visionBadge" class="pill" style="display:none"></span>
+<div class="container">
+    <div class="card">
+        <h2>1) Upload or Capture Fruit Image</h2>
+        <div class="row">
+            <input id="file" type="file" accept="image/*" capture="environment" />
+            <button onclick="predictFile()">Predict</button>
+            <button class="secondary" onclick="startCam('environment')">Use Camera</button>
+            <button class="gray" onclick="switchCamera()">Switch Camera</button>
+            <button class="gray" onclick="snap()">Snapshot</button>
+            <button class="gray" onclick="stopCam()">Stop Camera</button>
+            <button class="gray" onclick="clearVision()">Clear Image</button>
         </div>
+        <video id="video" autoplay playsinline muted width="320" height="240" style="display:none;background:#000"></video>
+        <canvas id="canvas" width="320" height="240" style="display:none"></canvas>
+        <img id="preview" alt="preview" />
+        <div id="visionTop" class="big"></div>
+        <span id="visionBadge" class="pill" style="display:none"></span>
+    </div>
 
         <!-- Gas card -->
         <div class="card">
@@ -633,7 +633,31 @@ def ui():
         }
         refresh();
         setInterval(refresh, 2000);
-    </script>
+let stream = null;
+let currentFacing = "environment";
+
+async function startCam(facing="environment") {
+  try {
+    currentFacing = facing;
+    if (stream) stopCam();
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: {ideal:1280}, height:{ideal:720} },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.style.display = 'block';
+  } catch (e) {
+    alert('Camera error: ' + e);
+  }
+}
+function stopCam() {
+  if (stream) { stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  video.style.display='none';
+}
+async function switchCamera() {
+  await startCam(currentFacing==="environment" ? "user" : "environment");
+}
+</script>
 </body>
 
 </html>
