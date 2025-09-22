@@ -165,197 +165,232 @@ def _summarize(last: dict) -> dict:
 def summary():
     return _summarize(LAST)
 
-# ------------------ UI (Upload + Webcam + Gas test + Summary) ------------------
-@app.get("/", response_class=HTMLResponse)
+@app.get("/app", response_class=HTMLResponse)
 def ui():
-    # Keep this as one triple-quoted string; indentation matters only for "return".
     return """
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Fruit & Gas (Cloud Demo)</title>
+  <meta charset="UTF-8">
+  <title>Fruit Freshness Detector</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body{font-family:system-ui,Arial,sans-serif;max-width:980px;margin:28px auto;padding:0 14px}
-    .card{border:1px solid #e5e5e5;border-radius:14px;padding:16px;margin:14px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+    /* Background GIF across the whole page */
+    body{
+      margin:0;
+      font-family:Arial,Helvetica,sans-serif;
+      color:#1f2937;
+      background:url('https://i.pinimg.com/originals/3d/91/51/3d9151870044e69f2d93a9d0311275dd.gif') center center / cover no-repeat fixed;
+      position:relative;
+      min-height:100vh;
+    }
+    /* Overlay to keep content readable over the GIF */
+    body::before{
+      content:"";
+      position:fixed; inset:0;
+      background:rgba(0,0,0,0.35);
+      pointer-events:none;
+      z-index:-1;
+    }
+
+    header{
+      background:linear-gradient(90deg,rgba(34,197,94,0.95),rgba(22,163,74,0.95));
+      padding:18px;
+      text-align:center;
+      color:#fff
+    }
+    header h1{margin:0;font-size:2rem}
+    header p{margin:6px 0 0 0; opacity:.95}
+
+    .container{width:92%;max-width:1100px;margin:24px auto}
+    .card{
+      background:rgba(255,255,255,0.94);
+      border-radius:12px;
+      padding:18px;
+      margin-bottom:18px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      border:1px solid rgba(0,0,0,0.05);
+    }
+    .card h2{
+      margin:0 0 12px;
+      color:#16a34a;
+      font-size:1.2rem;
+      border-left:4px solid #16a34a;
+      padding-left:10px;
+    }
+    button{
+      background:#22c55e;color:#fff;padding:10px 14px;border:none;border-radius:8px;
+      cursor:pointer;transition:background .2s; font-weight:700
+    }
+    button:hover{background:#16a34a}
+    button.secondary{background:#e5f7ec;color:#166534;border:1px solid #bbf7d0}
+    button.gray{background:#f3f4f6;color:#111827;border:1px solid #e5e7eb}
+    input[type=file],input[type=number]{padding:8px;border:1px solid #d1d5db;border-radius:6px;background:#fff}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    button{padding:.55rem .9rem;border-radius:10px;border:1px solid #999;background:#fff;cursor:pointer}
-    .pill{display:inline-block;padding:6px 10px;border-radius:999px;font-weight:600}
-    .ok{background:#e8fff0;color:#147a2e;border:1px solid #b9e3c6}
-    .warn{background:#fff5e6;color:#a05a00;border:1px solid #ffd9a6}
-    .bad{background:#ffecec;color:#a40000;border:1px solid #ffb3b3}
-    .big{font-size:28px;font-weight:800;margin:8px 0}
-    img,video,canvas{max-width:100%;border-radius:10px}
-    pre{background:#fafafa;border:1px dashed #ddd;padding:10px;border-radius:10px;overflow:auto}
-    input[type=number], input[type=text]{padding:.3rem .4rem;border-radius:8px;border:1px solid #bbb}
-    .tabbar{display:flex;gap:10px;margin-top:8px}
-    .tabbar button{border-radius:999px}
-    .hide{display:none}
+
+    .pill{padding:6px 10px;border-radius:999px;font-weight:600;font-size:0.9rem; border:1px solid #d1d5db; background:#fff}
+    .ok{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0}
+    .bad{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+    .warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+
+    .big{font-size:22px;font-weight:800;margin-top:10px}
+    img,video,canvas{max-width:100%;border-radius:10px;margin-top:10px}
+    pre{white-space:pre-wrap;background:#0b1220;color:#e5e7eb;border-radius:8px;padding:12px; max-height:320px; overflow:auto}
+    footer{
+      text-align:center;
+      padding:16px;
+      background:rgba(238,238,238,0.92);
+      color:#111827;margin-top:20px;font-size:0.9rem
+    }
   </style>
 </head>
 <body>
-  <h1>🍎 Fresh/Rotten + 🛡️ MQ-135</h1>
+  <header>
+    <h1>🍎 Fruit Freshness & Gas Detector</h1>
+    <p>Simple, clear interface — upload, predict, and view gas-based decision</p>
+  </header>
 
-  <!-- 1) Vision -->
-  <div class="card">
-    <h2>1) Image prediction</h2>
-    <div class="tabbar">
-      <button id="tabUpload" onclick="showUpload()" class="pill ok">Upload</button>
-      <button id="tabWebcam" onclick="showWebcam()" class="pill">Webcam</button>
-    </div>
-
-    <!-- Upload mode -->
-    <div id="uploadBox">
-      <div class="row" style="margin-top:8px">
+  <div class="container">
+    <!-- Vision card -->
+    <div class="card">
+      <h2>1) Upload or Capture Fruit Image</h2>
+      <div class="row">
         <input id="file" type="file" accept="image/*"/>
         <button onclick="predictFile()">Predict</button>
-        <span id="visionBadge" class="pill ok" style="display:none"></span>
+        <button class="secondary" onclick="startCam()">Use Webcam</button>
+        <button class="gray" onclick="snap()">Snapshot</button>
+        <button class="gray" onclick="stopCam()">Stop Camera</button>
+        <button class="gray" onclick="clearVision()">Clear Image</button>
       </div>
+      <video id="video" autoplay playsinline width="320" height="240" style="display:none;background:#000"></video>
+      <canvas id="canvas" width="320" height="240" style="display:none"></canvas>
+      <img id="preview" alt="preview"/>
       <div id="visionTop" class="big"></div>
-      <img id="preview"/>
+      <span id="visionBadge" class="pill" style="display:none"></span>
     </div>
 
-    <!-- Webcam mode -->
-    <div id="webcamBox" class="hide" style="margin-top:10px">
-      <div class="row">
-        <button onclick="startCam()">Open camera</button>
-        <button id="snapBtn" onclick="snap()" disabled>Capture</button>
-        <button id="predictSnapBtn" onclick="predictSnap()" disabled>Predict snapshot</button>
-        <span id="visionBadge2" class="pill ok" style="display:none"></span>
+    <!-- Gas card -->
+    <div class="card">
+      <h2>2) Gas Sensor Reading</h2>
+      <div class="row" style="margin-bottom:8px">
+        ADC <input id="adc" type="number" value="1800"/>
+        Vref <input id="vref" type="number" value="3.3" step="0.1"/>
+        RL(Ω) <input id="rl" type="number" value="10000"/>
+        R0(Ω) <input id="r0" type="number" value="10000"/>
+        <button onclick="sendGas()">Send</button>
+        <button class="gray" onclick="preset('fresh')">Fresh Preset</button>
+        <button class="gray" onclick="preset('spoiled')">Spoiled Preset</button>
+        <button class="gray" onclick="resetGas()">Reset</button>
       </div>
-      <div class="row" style="margin-top:8px">
-        <video id="video" autoplay playsinline width="480" height="360" style="background:#000"></video>
-        <canvas id="canvas" class="hide" width="480" height="360"></canvas>
+      <div id="gasBadges" style="margin-top:6px"></div>
+    </div>
+
+    <!-- Decision card -->
+    <div class="card">
+      <h2>3) Final Decision</h2>
+      <div id="decision" class="big"></div>
+      <div class="row" style="margin:10px 0">
+        <button class="secondary" onclick="refresh()">Refresh Summary</button>
+        <button class="gray" onclick="clearAll()">Clear All</button>
       </div>
-      <div id="visionTop2" class="big"></div>
-      <img id="snapPreview" />
-    </div>
-  </div>
-
-  <!-- 2) Gas -->
-  <div class="card">
-    <h2>2) Gas reading (manual test)</h2>
-    <div class="row">
-      ADC <input id="adc" type="number" value="1800"/>
-      Vref <input id="vref" type="number" value="3.3" step="0.1"/>
-      RL(Ω) <input id="rl" type="number" value="10000"/>
-      R0(Ω) <input id="r0" type="number" value="10000"/>
-      <button onclick="sendGas()">Send</button>
-    </div>
-    <div id="gasBadges" style="margin-top:8px"></div>
-  </div>
-
-  <!-- 3) Decision -->
-  <div class="card">
-    <h2>3) Final decision</h2>
-    <div id="decision" class="big"></div>
-    <div class="row">
-      <button onclick="refresh()">Refresh summary</button>
-    </div>
-    <details style="margin-top:8px"><summary>Show raw</summary>
       <pre id="raw"></pre>
-    </details>
+    </div>
   </div>
+
+  <footer>© 2025 Fruit Detector • FastAPI + Roboflow + MQ‑135</footer>
 
 <script>
-/* ---------- tiny UI helpers ---------- */
-const badge = (t,c)=>`<span class="pill ${c}">${t}</span>`;
-function showUpload(){ uploadBox.classList.remove('hide'); webcamBox.classList.add('hide'); tabUpload.classList.add('ok'); tabWebcam.classList.remove('ok'); }
-function showWebcam(){ webcamBox.classList.remove('hide'); uploadBox.classList.add('hide'); tabWebcam.classList.add('ok'); tabUpload.classList.remove('ok'); }
+const badge=(t,c)=>`<span class="pill ${c}">${t}</span>`;
 
-/* ---------- upload flow ---------- */
+function clearVision(){
+  preview.src=''; preview.style.display='none';
+  video.style.display='none'; canvas.style.display='none';
+  visionBadge.style.display='none'; visionTop.textContent='';
+}
+
+function clearAll(){
+  clearVision();
+  gasBadges.innerHTML='';
+  decision.className='big'; decision.textContent='';
+  raw.textContent='';
+}
+
 async function predictFile(){
-  const f = file.files[0];
-  if(!f){ alert('Choose an image'); return; }
-  preview.src = URL.createObjectURL(f);
-  const fd = new FormData(); fd.append('image', f, f.name);
-  const r = await fetch('/predict',{method:'POST', body: fd}); const j = await r.json();
-
-  let top=null;
-  if(j && j.predictions && j.predictions.length){
-    top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];
-  }
+  const f=file.files[0]; if(!f){alert('Choose an image');return;}
+  preview.src=URL.createObjectURL(f);
+  preview.style.display='block';
+  const fd=new FormData(); fd.append('image',f,f.name);
+  const r=await fetch('/predict',{method:'POST',body:fd}); const j=await r.json();
+  let top=null; if(j.predictions&&j.predictions.length){top=j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];}
   if(top){
     visionBadge.style.display='inline-block';
-    const lbl = String(top.class||'?');
-    visionBadge.className = 'pill ' + (lbl.startsWith('rotten')?'bad':'ok');
-    visionBadge.textContent = `${lbl} • ${(top.confidence*100).toFixed(1)}%`;
-    visionTop.textContent = lbl.replace('_',' ').toUpperCase();
+    const lbl=String(top.class||'?');
+    visionBadge.className='pill '+(lbl.startsWith('rotten')?'bad':'ok');
+    visionBadge.textContent=`${lbl} • ${(top.confidence*100).toFixed(1)}%`;
+    visionTop.textContent=lbl.replace('_',' ').toUpperCase();
   }
   await refresh();
 }
 
-/* ---------- webcam flow ---------- */
-let stream=null,lastSnapBlob=null;
-
+let stream=null;
 async function startCam(){
   try{
-    stream = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
-    video.srcObject = stream;
-    snapBtn.disabled = false;
-  }catch(e){ alert('Could not open camera: ' + e); }
+    stream=await navigator.mediaDevices.getUserMedia({video:true});
+    video.srcObject=stream; video.style.display='block';
+  }catch(e){alert('Camera error: '+e);}
+}
+function stopCam(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  video.style.display='none';
 }
 function snap(){
-  const ctx = canvas.getContext('2d');
-  canvas.classList.remove('hide');
+  if(!stream){alert('Start the webcam first'); return;}
+  const ctx=canvas.getContext('2d'); canvas.style.display='block';
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  canvas.toBlob(b=>{
-    lastSnapBlob = b;
-    snapPreview.src = URL.createObjectURL(b);
-    predictSnapBtn.disabled = true; // enable after a tick to avoid double-click
-    predictSnapBtn.disabled = false;
-  }, 'image/jpeg', 0.92);
-}
-async function predictSnap(){
-  if(!lastSnapBlob){ alert('Take a snapshot first'); return; }
-  const fd = new FormData(); fd.append('image', lastSnapBlob, 'snapshot.jpg');
-  const r = await fetch('/predict',{method:'POST', body: fd}); const j = await r.json();
-
-  let top=null;
-  if(j && j.predictions && j.predictions.length){
-    top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];
-  }
-  if(top){
-    visionBadge2.style.display='inline-block';
-    const lbl = String(top.class||'?');
-    visionBadge2.className = 'pill ' + (lbl.startsWith('rotten')?'bad':'ok');
-    visionBadge2.textContent = `${lbl} • ${(top.confidence*100).toFixed(1)}%`;
-    visionTop2.textContent = lbl.replace('_',' ').toUpperCase();
-  }
-  await refresh();
+  canvas.toBlob(async b=>{
+    const fd=new FormData(); fd.append('image',b,'snapshot.jpg');
+    const r=await fetch('/predict',{method:'POST',body:fd}); const j=await r.json();
+    let top=null; if(j.predictions&&j.predictions.length){top=j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];}
+    if(top){
+      visionBadge.style.display='inline-block';
+      const lbl=String(top.class||'?');
+      visionBadge.className='pill '+(lbl.startsWith('rotten')?'bad':'ok');
+      visionBadge.textContent=`${lbl} • ${(top.confidence*100).toFixed(1)}%`;
+      visionTop.textContent=lbl.replace('_',' ').toUpperCase();
+    }
+    await refresh();
+  },'image/jpeg',0.92);
 }
 
-/* ---------- gas manual test ---------- */
 async function sendGas(){
-  const body = {
-    adc:  parseInt(adc.value||'0'),
-    vref: parseFloat(vref.value||'3.3'),
-    rl:   parseInt(rl.value||'10000'),
-    r0:   parseInt(r0.value||'10000')
+  const body={
+    adc:parseInt(adc.value||'0'),
+    vref:parseFloat(vref.value||'3.3'),
+    rl:parseInt(rl.value||'10000'),
+    r0:parseInt(r0.value||'10000')
   };
   await fetch('/gas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   await refresh();
 }
-
-/* ---------- summary refresh ---------- */
-async function refresh(){
-  const r = await fetch('/summary'); const s = await r.json();
-  const g = s.gas_ppm || {}, gf = s.gas_flags || {};
-
-  gasBadges.innerHTML = [
-    badge(`CO₂ ${g.co2 ?? '—'} ppm`,  gf.co2_high ? 'bad':'ok'),
-    badge(`NH₃ ${g.nh3 ?? '—'} ppm`, gf.nh3_high ? 'bad':'ok'),
-    badge(`VOC ${g.alcohol ?? '—'} eq`, gf.voc_high ? 'warn':'ok')
-  ].join(' ');
-
-  decision.className = 'big ' + (s.decision==='SPOILED' ? 'bad' : 'ok');
-  decision.textContent = s.decision;
-  raw.textContent = JSON.stringify(s, null, 2);
+function resetGas(){ adc.value="1800"; vref.value="3.3"; rl.value="10000"; r0.value="10000"; }
+function preset(type){
+  if(type==='fresh'){ adc.value="1200"; r0.value="12000"; }
+  if(type==='spoiled'){ adc.value="2500"; r0.value="8000"; }
 }
 
-showUpload();        // default tab
-refresh();           // initial summary
-setInterval(refresh, 2000);  // auto-update every 2s
+async function refresh(){
+  const r=await fetch('/summary'); const s=await r.json();
+  const g=s.gas_ppm||{}, gf=s.gas_flags||{};
+  gasBadges.innerHTML=[
+    badge(`CO₂ ${g.co2??'—'} ppm`, gf.co2_high?'bad':'ok'),
+    badge(`NH₃ ${g.nh3??'—'} ppm`, gf.nh3_high?'bad':'ok'),
+    badge(`VOC ${g.alcohol??'—'} eq`, gf.voc_high?'warn':'ok')
+  ].join(' ');
+  decision.className='big '+(s.decision==='SPOILED'?'bad':'ok');
+  decision.textContent=s.decision||'';
+  raw.textContent=JSON.stringify(s,null,2);
+}
+refresh(); setInterval(refresh,2000);
 </script>
 </body>
 </html>
