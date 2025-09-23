@@ -108,15 +108,17 @@ def gas(g: GasReading):
 
     # Update LAST
     LAST["gas"] = data
-    LAST["gas_updated"] = datetime.utcnow().isoformat()
+    now = datetime.utcnow()
+    LAST["gas_updated"] = now.isoformat()
 
-    # Append to HISTORY (with UTC ISO time)
-    now_iso = datetime.utcnow().isoformat()
-    HISTORY.append({"time": now_iso, "ppm": data["ppm"]})
+    # append to history (JS-safe fields)
+    now_iso = now.replace(microsecond=0).isoformat() + "Z"   # e.g., 2025-09-22T08:16:10Z
+    now_ms  = int(now.timestamp() * 1000)                    # epoch ms for JS Date
+    HISTORY.append({"time": now_iso, "ts": now_ms, "ppm": data["ppm"]})
 
-    # Trim anything older than 2 days
-    cutoff = datetime.utcnow() - timedelta(days=2)
-    HISTORY[:] = [h for h in HISTORY if datetime.fromisoformat(h["time"]) >= cutoff]
+    # trim to last 2 days
+    cutoff = now - timedelta(days=2)
+    HISTORY[:] = [h for h in HISTORY if datetime.fromisoformat(h["time"].replace("Z","")) >= cutoff]
 
     return {"ok": True, "data": data}
 
@@ -380,106 +382,61 @@ def ui():
       raw.textContent = JSON.stringify(s, null, 2);
     }
     refresh(); setInterval(refresh, 2000);
-  async function loadChart(){
-    const statusEl = document.getElementById('chartStatus');
-    try {
-      statusEl.textContent = 'Loading history…';
+async function loadChart(){
+  const statusEl = document.getElementById('chartStatus');
+  try {
+    statusEl.textContent = 'Loading history…';
+    const r = await fetch('/history', { cache: 'no-store' });
+    const j = await r.json();
 
-      const r = await fetch('/history', { cache: 'no-store' });
-      if (!r.ok) {
-        statusEl.textContent = `History HTTP ${r.status}`;
-        console.error('History fetch failed:', r.status, r.statusText);
-        return;
-      }
-      const j = await r.json();
-
-      // Validate structure
-      if (!j || !Array.isArray(j.history)) {
-        statusEl.textContent = 'History payload malformed';
-        console.error('Bad /history payload:', j);
-        return;
-      }
-      if (j.history.length === 0) {
-        statusEl.textContent = 'No readings yet (send some gas readings first)';
-        console.warn('No history data to chart');
-        return;
-      }
-
-      // Build series
-      const labels = j.history.map(h => new Date(h.time).toLocaleString());
-      const co2    = j.history.map(h => h?.ppm?.co2 ?? null);
-      const nh3    = j.history.map(h => h?.ppm?.nh3 ?? null);
-
-      console.log('Chart labels:', labels);
-      console.log('CO2 series   :', co2);
-      console.log('NH3 series   :', nh3);
-
-      const canvas = document.getElementById('gasChart');
-      if (!canvas) {
-        statusEl.textContent = 'Canvas not found (id=gasChart)';
-        console.error('Missing #gasChart canvas element');
-        return;
-      }
-
-      // Give the canvas a visible size and a light border so you can see it
-      canvas.style.minHeight = '200px';
-      canvas.style.border = '1px solid #e5e7eb';
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        statusEl.textContent = 'Could not get 2D context';
-        console.error('getContext("2d") returned null');
-        return;
-      }
-
-      // Create or update chart
-      if (!window.gasChart){
-        window.gasChart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels,
-            datasets: [
-              {
-                label: 'CO₂ (ppm)',
-                data: co2,
-                borderColor: '#ef4444',
-                backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                tension: 0.25,
-                pointRadius: 2
-              },
-              {
-                label: 'NH₃ (ppm)',
-                data: nh3,
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                tension: 0.25,
-                pointRadius: 2
-              }
-            ]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,        // allow our minHeight to matter
-            plugins: { legend: { position: 'bottom' } },
-            scales: {
-              y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,.06)' } },
-              x: { grid: { display: false } }
-            }
-          }
-        });
-      } else {
-        gasChart.data.labels = labels;
-        gasChart.data.datasets[0].data = co2;
-        gasChart.data.datasets[1].data = nh3;
-        gasChart.update();
-      }
-
-      statusEl.textContent = `Plotted ${j.history.length} reading(s)`;
-    } catch (err) {
-      statusEl.textContent = 'Chart error (see console)';
-      console.error('loadChart() error:', err);
+    if (!j || !Array.isArray(j.history) || j.history.length === 0) {
+      statusEl.textContent = 'No readings yet (send some gas readings first)';
+      return;
     }
+
+    // ✅ Use epoch ms (ts) if present; otherwise try parsing time
+    const labels = j.history.map(h => {
+      const ms = h.ts ?? Date.parse(h.time);
+      return isNaN(ms) ? 'Unknown' : new Date(ms).toLocaleString();
+    });
+    const co2 = j.history.map(h => h?.ppm?.co2 ?? null);
+    const nh3 = j.history.map(h => h?.ppm?.nh3 ?? null);
+
+    const canvas = document.getElementById('gasChart');
+    canvas.style.minHeight = '200px';
+    canvas.style.border = '1px solid #e5e7eb';
+    const ctx = canvas.getContext('2d');
+
+    if (!window.gasChart){
+      window.gasChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'CO₂ (ppm)', data: co2, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.15)', tension: .25, pointRadius: 2 },
+            { label: 'NH₃ (ppm)', data: nh3, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.15)', tension: .25, pointRadius: 2 }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom' } },
+          scales: { y: { beginAtZero: true }, x: { grid: { display:false } } }
+        }
+      });
+    } else {
+      gasChart.data.labels = labels;
+      gasChart.data.datasets[0].data = co2;
+      gasChart.data.datasets[1].data = nh3;
+      gasChart.update();
+    }
+
+    statusEl.textContent = `Plotted ${j.history.length} reading(s)`;
+  } catch (err) {
+    statusEl.textContent = 'Chart error (see console)';
+    console.error('loadChart() error:', err);
   }
+}
 </script>
 
 </body>
