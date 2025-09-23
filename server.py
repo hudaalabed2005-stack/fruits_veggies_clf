@@ -5,6 +5,9 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+import sqlite3
+from pathlib import Path
+from datetime import timedelta
 
 # Roboflow
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
@@ -33,8 +36,52 @@ LAST = {
     "gas": None,
     "gas_updated": None,
 }
-# store history of gas readings (UTC timestamps)
-HISTORY = []
+DB_PATH = Path("data.db")
+
+def init_db():
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gas_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,         -- ISO UTC string
+            co2 REAL, nh3 REAL, benzene REAL, alcohol REAL
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_gas_ts ON gas_readings(ts)")
+    con.commit()
+    con.close()
+
+def save_reading(ppm: dict):
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute(
+        "INSERT INTO gas_readings (ts, co2, nh3, benzene, alcohol) VALUES (?, ?, ?, ?, ?)",
+        (datetime.utcnow().isoformat(), ppm.get("co2"), ppm.get("nh3"),
+         ppm.get("benzene"), ppm.get("alcohol"))
+    )
+    con.commit()
+    con.close()
+
+def load_history_last_days(days: int = 2):
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("""
+        SELECT ts, co2, nh3, benzene, alcohol
+        FROM gas_readings
+        WHERE ts >= ?
+        ORDER BY ts ASC
+    """, (cutoff,))
+    rows = cur.fetchall()
+    con.close()
+    return [
+        {"time": ts, "ppm": {"co2": co2, "nh3": nh3, "benzene": benz, "alcohol": alc}}
+        for (ts, co2, nh3, benz, alc) in rows
+    ]
+
+# initialize once at startup
+init_db()
 
 # -------- Predict (vision) ----------
 @app.post("/predict")
@@ -106,27 +153,18 @@ def gas(g: GasReading):
         },
     }
 
-    # Update LAST
-    LAST["gas"] = data
-    now = datetime.utcnow()
-    LAST["gas_updated"] = now.isoformat()
+LAST["gas"] = data
+LAST["gas_updated"] = datetime.utcnow().isoformat()
 
-    # append to history (JS-safe fields)
-    now_iso = now.replace(microsecond=0).isoformat() + "Z"   # e.g., 2025-09-22T08:16:10Z
-    now_ms  = int(now.timestamp() * 1000)                    # epoch ms for JS Date
-    HISTORY.append({"time": now_iso, "ts": now_ms, "ppm": data["ppm"]})
+# persist to DB instead of RAM
+save_reading(data["ppm"])
 
-    # trim to last 2 days
-    cutoff = now - timedelta(days=2)
-    HISTORY[:] = [h for h in HISTORY if datetime.fromisoformat(h["time"].replace("Z","")) >= cutoff]
-
-    return {"ok": True, "data": data}
+return {"ok": True, "data": data}
 
 @app.get("/history")
 def history():
-    cutoff = datetime.utcnow() - timedelta(days=2)
-    last2 = [h for h in HISTORY if datetime.fromisoformat(h["time"]) >= cutoff]
-    return {"history": last2}
+    """Return last 2 days of gas readings from DB."""
+    return {"history": load_history_last_days(days=2)}
 
 # -------- Summary ----------
 def _summarize(last: dict) -> dict:
