@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 import sqlite3
 from pathlib import Path
-
+import io, csv
 import requests
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -83,10 +83,9 @@ def load_history_last_days(days: int = 2):
         for (ts, co2, nh3, benz, alc) in rows
     ]
 
-# initialize once at startup
 init_db()
 
-# -------- Predict (vision) ----------
+#Predict
 @app.post("/predict")
 async def predict(image: UploadFile = File(...)):
     """Accept an uploaded image, forward to Roboflow, cache the result."""
@@ -102,7 +101,7 @@ async def predict(image: UploadFile = File(...)):
     LAST["vision_updated"] = datetime.utcnow().isoformat()
     return JSONResponse(resp)
 
-# -------- Gas model ----------
+# Gas model
 class GasReading(BaseModel):
     # either vrl or adc
     vrl: float | None = None
@@ -162,6 +161,13 @@ def gas(g: GasReading):
     save_reading(data["ppm"])
 
     return {"ok": True, "data": data}
+@app.post("/cron/snapshot")
+def cron_snapshot():
+    """Store whatever is in LAST['gas'] right now."""
+    if not LAST.get("gas") or not LAST["gas"].get("ppm"):
+        return {"ok": False, "error": "No gas reading to snapshot yet."}
+    save_reading(LAST["gas"]["ppm"])
+    return {"ok": True, "saved": LAST["gas"]["ppm"]}
 
 @app.get("/history")
 def history():
@@ -204,6 +210,22 @@ def _summarize(last: dict) -> dict:
         "gas_flags": {"co2_high": co2_hi, "nh3_high": nh3_hi, "voc_high": voc_hi},
         "decision": "SPOILED" if spoiled else "FRESH",
     }
+@app.get("/export.csv")
+def export_csv():
+    rows = load_history_last_days(days=2)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["timestamp_utc", "co2_ppm", "nh3_ppm", "benzene_ppm", "alcohol_eq"])
+    for r in rows:
+        ts = r["time"]
+        ppm = r["ppm"] or {}
+        w.writerow([ts, ppm.get("co2"), ppm.get("nh3"), ppm.get("benzene"), ppm.get("alcohol")])
+    csv_data = buf.getvalue()
+    return HTMLResponse(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="gas_last_2_days.csv"'}
+    )
 
 @app.get("/summary")
 def summary():
@@ -317,6 +339,7 @@ def ui():
         <button class="gray" onclick="preset('fresh')">Fresh Preset</button>
         <button class="gray" onclick="preset('spoiled')">Spoiled Preset</button>
         <button class="gray" onclick="resetGas()">Reset</button>
+        <button class="gray" onclick="saveSnap()">Save Snapshot</button>
       </div>
       <div id="gasBadges" style="margin-top:6px"></div>
     </div>
@@ -409,6 +432,16 @@ def ui():
     function resetGas(){ adc.value="1800"; vref.value="3.3"; rl.value="10000"; r0.value="10000"; }
     function preset(type){ if(type==='fresh'){ adc.value="1200"; r0.value="12000"; } if(type==='spoiled'){ adc.value="2500"; r0.value="8000"; } }
 
+  async function saveSnap(){
+  const r = await fetch('/cron/snapshot', {method:'POST'});
+  const j = await r.json();
+  if(j.ok){
+    await loadChart();
+    alert('Snapshot saved ✔');
+  }else{
+    alert('No reading to save yet. Send a gas reading first.');
+  }
+}
     async function refresh(){
       const r = await fetch('/summary'); const s = await r.json();
       const g = s.gas_ppm || {}, gf = s.gas_flags || {};
@@ -477,6 +510,9 @@ async function loadChart(){
     console.error('loadChart() error:', err);
   }
 }
+loadChart();
+setInterval(loadChart, 60000);  // refresh every minute
+
 </script>
 
 </body>
