@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timedelta
-
 import requests
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,7 +75,7 @@ from datetime import timedelta
 def gas(g: GasReading):
     """
     Accept gas info from ESP32/UNO (or the manual UI),
-    compute Rs/ratio/ppm, update LAST and append to HISTORY.
+    compute Rs/ratio/ppm, update LAST, and store in HISTORY.
     """
     VREF = g.vref or 3.3
     RL   = g.rl or 10000.0
@@ -91,7 +90,7 @@ def gas(g: GasReading):
 
     # Rs from divider if not provided
     rs = g.rs if g.rs is not None else ((VREF - g.vrl) * RL) / max(0.001, g.vrl)
-    r0 = g.r0 or rs                      # if unknown, treat current as baseline
+    r0 = g.r0 or rs
     ratio = rs / max(1e-6, r0)
 
     data = {
@@ -107,23 +106,22 @@ def gas(g: GasReading):
         },
     }
 
-
+    # Update LAST
     LAST["gas"] = data
     LAST["gas_updated"] = datetime.utcnow().isoformat()
 
+    # Append to HISTORY (with UTC ISO time)
     now_iso = datetime.utcnow().isoformat()
     HISTORY.append({"time": now_iso, "ppm": data["ppm"]})
 
-    # keep only last 2 days
+    # Trim anything older than 2 days
     cutoff = datetime.utcnow() - timedelta(days=2)
     HISTORY[:] = [h for h in HISTORY if datetime.fromisoformat(h["time"]) >= cutoff]
 
     return {"ok": True, "data": data}
 
-
 @app.get("/history")
 def history():
-    """Return last 2 days of gas readings."""
     cutoff = datetime.utcnow() - timedelta(days=2)
     last2 = [h for h in HISTORY if datetime.fromisoformat(h["time"]) >= cutoff]
     return {"history": last2}
