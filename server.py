@@ -433,8 +433,8 @@ async function sendGas(){
 
 function resetGas(){ adc.value="512"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
 function preset(type){
-  if(type==='fresh'){   adc.value="350"; r0.value="12000"; vref.value="5.0"; }
-  if(type==='spoiled'){ adc.value="800"; r0.value="8000";  vref.value="5.0"; }
+  if(type==='fresh'){   adc.value="2000"; r0.value="10000"; vref.value="5.0"; }
+  if(type==='spoiled'){ adc.value="800"; r0.value="10000";  vref.value="5.0"; }
 }
 
   async function saveSnap(){
