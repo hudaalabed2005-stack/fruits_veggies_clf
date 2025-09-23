@@ -361,21 +361,62 @@ def ui():
 
   <footer>© 2025 Fruit Detector • FastAPI + Roboflow + MQ-135</footer>
 
-  <script>
-    const badge = (t, c) => `<span class="pill ${c}">${t}</span>`;
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  // ---------- small helpers ----------
+  const badge = (t, c) => `<span class="pill ${c}">${t}</span>`;
+  const GAS_LS_KEY = "gas_history_cache_v1";
 
-    function clearVision(){
-      preview.src=''; preview.style.display='none';
-      video.style.display='none'; canvas.style.display='none';
-      visionBadge.style.display='none'; visionTop.textContent='';
+  // Gracefully ensure Chart.js exists (fallback if CDN is blocked)
+  async function ensureChartJs() {
+    if (window.Chart) return;
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js";
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  // ---------- Vision helpers (unchanged) ----------
+  function clearVision(){
+    preview.src=''; preview.style.display='none';
+    video.style.display='none'; canvas.style.display='none';
+    visionBadge.style.display='none'; visionTop.textContent='';
+  }
+  function clearAll(){ clearVision(); gasBadges.innerHTML=''; decision.className='big'; decision.textContent=''; raw.textContent=''; }
+
+  async function predictFile(){
+    const f = file.files[0]; if(!f){ alert('Choose an image'); return; }
+    preview.src = URL.createObjectURL(f); preview.style.display='block';
+    const fd = new FormData(); fd.append('image', f, f.name);
+    const r = await fetch('/predict', { method:'POST', body:fd }); const j = await r.json();
+    let top = null; if(j.predictions && j.predictions.length){ top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; }
+    if(top){
+      visionBadge.style.display='inline-block';
+      const lbl = String(top.class || '?');
+      visionBadge.className = 'pill ' + (lbl.startsWith('rotten') ? 'bad' : 'ok');
+      visionBadge.textContent = `${lbl} • ${(top.confidence*100).toFixed(1)}%`;
+      visionTop.textContent = lbl.replace('_',' ').toUpperCase();
     }
-    function clearAll(){ clearVision(); gasBadges.innerHTML=''; decision.className='big'; decision.textContent=''; raw.textContent=''; }
+    await refresh();
+  }
 
-    async function predictFile(){
-      const f = file.files[0]; if(!f){ alert('Choose an image'); return; }
-      preview.src = URL.createObjectURL(f); preview.style.display='block';
-      const fd = new FormData(); fd.append('image', f, f.name);
-      const r = await fetch('/predict', { method:'POST', body:fd }); const j = await r.json();
+  let stream=null;
+  async function startCam(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({video:true});
+      video.srcObject = stream; video.style.display='block';
+    }catch(e){ alert('Camera error: '+e); }
+  }
+  function stopCam(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } video.style.display='none'; }
+  function snap(){
+    if(!stream){ alert('Start the webcam first'); return; }
+    const ctx = canvas.getContext('2d'); canvas.style.display='block';
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    canvas.toBlob(async b=>{
+      const fd = new FormData(); fd.append('image', b, 'snapshot.jpg');
+      const r = await fetch('/predict',{method:'POST', body:fd}); const j = await r.json();
       let top = null; if(j.predictions && j.predictions.length){ top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; }
       if(top){
         visionBadge.style.display='inline-block';
@@ -385,147 +426,173 @@ def ui():
         visionTop.textContent = lbl.replace('_',' ').toUpperCase();
       }
       await refresh();
-    }
+    }, 'image/jpeg', 0.92);
+  }
 
-    let stream=null;
-    async function startCam(){
-      try{
-        stream = await navigator.mediaDevices.getUserMedia({video:true});
-        video.srcObject = stream; video.style.display='block';
-      }catch(e){ alert('Camera error: '+e); }
-    }
-    function stopCam(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } video.style.display='none'; }
-    function snap(){
-      if(!stream){ alert('Start the webcam first'); return; }
-      const ctx = canvas.getContext('2d'); canvas.style.display='block';
-      ctx.drawImage(video,0,0,canvas.width,canvas.height);
-      canvas.toBlob(async b=>{
-        const fd = new FormData(); fd.append('image', b, 'snapshot.jpg');
-        const r = await fetch('/predict',{method:'POST', body:fd}); const j = await r.json();
-        let top = null; if(j.predictions && j.predictions.length){ top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; }
-        if(top){
-          visionBadge.style.display='inline-block';
-          const lbl = String(top.class || '?');
-          visionBadge.className = 'pill ' + (lbl.startsWith('rotten') ? 'bad' : 'ok');
-          visionBadge.textContent = `${lbl} • ${(top.confidence*100).toFixed(1)}%`;
-          visionTop.textContent = lbl.replace('_',' ').toUpperCase();
-        }
-        await refresh();
-      }, 'image/jpeg', 0.92);
-    }
-
-async function sendGas(){
-  const body = {
-    adc:  parseInt(adc.value || '0'),
-    adc_max: 1023,     
-    vref: parseFloat(vref.value || '5.0'),
-    rl:   parseInt(rl.value || '10000'),
-    r0:   parseInt(r0.value || '10000'),
-  };
-  await fetch('/gas', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(body)
-  });
-  await refresh();
-  await loadChart();
-}
-
-function resetGas(){ adc.value="512"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
-function preset(type){
-  if(type==='fresh'){   adc.value="210"; r0.value="10000"; vref.value="5.0"; }
-  if(type==='spoiled'){ adc.value="820"; r0.value="10000"; vref.value="5.0"; }
-  if(type==='fermenting'){ adc.value="550"; r0.value="10000"; vref.value="5.0"; }
-  if(type==='ambient'){ adc.value="450"; r0.value="10000"; vref.value="5.0"; }
-}
-
+  // ---------- Gas form actions ----------
+  async function sendGas(){
+    const body = {
+      adc: parseInt(adc.value || '0'),
+      vref: parseFloat(vref.value || '5.0'),  // default 5V (UNO)
+      rl: parseInt(rl.value || '10000'),
+      r0: parseInt(r0.value || '10000'),
+      adc_max: 1023                            // force UNO scale
+    };
+    await fetch('/gas', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    await refresh();
+    await loadChart(true);  // also refresh chart
+  }
+  function resetGas(){ adc.value="1800"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
+  function preset(type){ if(type==='fresh'){ adc.value="1200"; r0.value="12000"; } if(type==='spoiled'){ adc.value="2500"; r0.value="8000"; } }
 
   async function saveSnap(){
-  const r = await fetch('/cron/snapshot', {method:'POST'});
-  const j = await r.json();
-  if(j.ok){
-    await loadChart();
-    alert('Snapshot saved ✔');
-  }else{
-    alert('No reading to save yet. Send a gas reading first.');
+    const r = await fetch('/cron/snapshot', {method:'POST'});
+    const j = await r.json();
+    if(j.ok){ await loadChart(true); alert('Snapshot saved ✔'); }
+    else    { alert('No reading to save yet. Send a gas reading first.'); }
   }
-}
-    async function refresh(){
-      const r = await fetch('/summary'); const s = await r.json();
-      const g = s.gas_ppm || {}, gf = s.gas_flags || {};
-      gasBadges.innerHTML = [
-        badge(`CO₂ ${g.co2??'—'} ppm`, gf.co2_high ? 'bad' : 'ok'),
-        badge(`NH₃ ${g.nh3??'—'} ppm`, gf.nh3_high ? 'bad' : 'ok'),
-        badge(`VOC ${g.alcohol??'—'} eq`, gf.voc_high ? 'warn' : 'ok')
-      ].join(' ');
-      decision.className = 'big ' + (s.decision === 'SPOILED' ? 'bad' : 'ok');
-      decision.textContent = s.decision || '';
-      raw.textContent = JSON.stringify(s, null, 2);
-    }
-    refresh(); setInterval(refresh, 2000);
-  async function loadChart() {
-    try {
-      const r = await fetch('/history');
-      const j = await r.json();
 
-      const rows = Array.isArray(j.history) ? j.history : [];
-      const labels = rows.map(h => new Date(h.time || h.ts).toLocaleString());
-      const co2    = rows.map(h => (h.ppm?.co2 ?? null));
-      const nh3    = rows.map(h => (h.ppm?.nh3 ?? null));
+  // ---------- Summary badges ----------
+  async function refresh(){
+    const r = await fetch('/summary'); const s = await r.json();
+    const g = s.gas_ppm || {}, gf = s.gas_flags || {};
+    gasBadges.innerHTML = [
+      badge(`CO₂ ${g.co2??'—'} ppm`, gf.co2_high ? 'bad' : 'ok'),
+      badge(`NH₃ ${g.nh3??'—'} ppm`, gf.nh3_high ? 'bad' : 'ok'),
+      // we show Alcohol as a crude VOC proxy; you can switch to benzene if preferred
+      badge(`VOC ${g.alcohol??'—'} eq`, gf.voc_high ? 'warn' : 'ok')
+    ].join(' ');
+    decision.className = 'big ' + (s.decision === 'SPOILED' ? 'bad' : 'ok');
+    decision.textContent = s.decision || '';
+    raw.textContent = JSON.stringify(s, null, 2);
+  }
+  refresh(); setInterval(refresh, 2000);
 
-      const canvas = document.getElementById('gasChart');
-      if (!canvas) {
-        console.warn('gasChart canvas not found');
-        return;
-      }
-      const ctx = canvas.getContext('2d');
+  // ---------- Pretty Chart (CO2 + NH3 + Benzene) ----------
+  let gasChart = null;
 
-      // No data? show a small note under the canvas and bail
-      const noteSel = document.getElementById('chartNote') || (() => {
-        const p = document.createElement('div');
-        p.id = 'chartNote';
-        p.style.fontSize = '12px';
-        p.style.marginTop = '6px';
-        canvas.parentElement.appendChild(p);
-        return p;
-      })();
-      noteSel.textContent = rows.length
-        ? `Plotted ${rows.length} reading(s)`
-        : 'No readings yet – send gas data or save a snapshot.';
+  function saveCache(rows){
+    try { localStorage.setItem(GAS_LS_KEY, JSON.stringify(rows.slice(-300))); } catch(_) {}
+  }
+  function loadCache(){
+    try { return JSON.parse(localStorage.getItem(GAS_LS_KEY) || "[]"); } catch(_) { return []; }
+  }
 
-      if (!window.gasChart) {
-        window.gasChart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels,
-            datasets: [
-              { label: 'CO₂ (ppm)', data: co2, borderColor: '#ef4444', tension: 0.25 },
-              { label: 'NH₃ (ppm)', data: nh3, borderColor: '#3b82f6', tension: 0.25 },
-            ]
-          },
-          options: {
-            responsive: true,
-            plugins: { legend: { position: 'bottom' } },
-            scales: { y: { beginAtZero: true } }
-          }
-        });
+  function buildGradient(ctx, color){
+    const g = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
+    // soft fill from color to transparent
+    g.addColorStop(0,  color + "AA");
+    g.addColorStop(1,  color + "00");
+    return g;
+  }
+
+  async function loadChart(forceFetch=false){
+    await ensureChartJs();
+
+    const canvas = document.getElementById('gasChart');
+    if(!canvas){ return; }
+    const ctx = canvas.getContext('2d');
+    if(!ctx){ return; }
+
+    // fetch server history (or fallback to cache)
+    let rows = [];
+    try{
+      if (forceFetch) {
+        const r = await fetch('/history', {cache: "no-store"});
+        const j = await r.json();
+        if (Array.isArray(j.history)) rows = j.history;
       } else {
-        // IMPORTANT: update the SAME object you created above
-        const c = window.gasChart;
-        c.data.labels = labels;
-        c.data.datasets[0].data = co2;
-        c.data.datasets[1].data = nh3;
-        c.update();
+        // First use cache (fast paint), then refresh from server
+        rows = loadCache();
+        setTimeout(()=>loadChart(true), 100); // background refresh
       }
-    } catch (err) {
-      console.error('loadChart() error:', err);
-      const note = document.getElementById('chartNote');
-      if (note) note.textContent = 'Chart error – see console';
+    }catch(_){ /* network error -> keep rows empty */ }
+
+    // If still empty, keep whatever the cache has
+    if (!rows.length) rows = loadCache();
+
+    const labels = rows.map(h => new Date(h.time || h.ts).toLocaleString());
+    const co2    = rows.map(h => (h.ppm?.co2     ?? null));
+    const nh3    = rows.map(h => (h.ppm?.nh3     ?? null));
+    const benz   = rows.map(h => (h.ppm?.benzene ?? null));
+
+    // keep cache fresh
+    if (rows.length) saveCache(rows);
+
+    // Beauty theme colors (match your green header)
+    const COL = {
+      co2:  "#22c55e",   // green
+      nh3:  "#0ea5e9",   // blue
+      benz: "#f59e0b"    // amber
+    };
+
+    const ds = [
+      {
+        label: "CO₂ (ppm)",
+        data: co2,
+        tension: 0.3,
+        borderColor: COL.co2,
+        pointRadius: 0,
+        fill: true,
+        backgroundColor: buildGradient(ctx, COL.co2)
+      },
+      {
+        label: "NH₃ (ppm)",
+        data: nh3,
+        tension: 0.3,
+        borderColor: COL.nh3,
+        pointRadius: 0,
+        fill: true,
+        backgroundColor: buildGradient(ctx, COL.nh3)
+      },
+      {
+        label: "Benzene (ppm)",
+        data: benz,
+        tension: 0.3,
+        borderColor: COL.benz,
+        pointRadius: 0,
+        fill: true,
+        backgroundColor: buildGradient(ctx, COL.benz)
+      }
+    ];
+
+    const options = {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", labels: { boxWidth: 12 } },
+        tooltip: { backgroundColor: "rgba(0,0,0,.8)" }
+      },
+      scales: {
+        x: {
+          ticks: { autoSkip: true, maxTicksLimit: 8 },
+          grid: { display: false }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: "rgba(0,0,0,.05)" }
+        }
+      }
+    };
+
+    // Create once, then update in-place so it never "disappears"
+    if (!gasChart) {
+      // give the canvas some height so it’s visible even with few points
+      canvas.style.height = "260px";
+      gasChart = new Chart(ctx, { type: "line", data: { labels, datasets: ds }, options });
+    } else {
+      gasChart.data.labels = labels;
+      gasChart.data.datasets[0].data = co2;
+      gasChart.data.datasets[1].data = nh3;
+      gasChart.data.datasets[2].data = benz;
+      gasChart.update();
     }
   }
-loadChart();
-setInterval(loadChart, 60000);  // refresh every minute
 
+  // initial paint + periodic refresh (keeps it alive across manual page reloads)
+  loadChart(false);
+  setInterval(()=>loadChart(true), 60_000); // refresh every minute
 </script>
 
 </body>
