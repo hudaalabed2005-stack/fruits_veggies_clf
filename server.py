@@ -455,61 +455,66 @@ def ui():
       raw.textContent = JSON.stringify(s, null, 2);
     }
     refresh(); setInterval(refresh, 2000);
-async function loadChart(){
-  const statusEl = document.getElementById('chartStatus');
-  try {
-    statusEl.textContent = 'Loading history…';
-    const r = await fetch('/history', { cache: 'no-store' });
-    const j = await r.json();
+  async function loadChart() {
+    try {
+      const r = await fetch('/history');
+      const j = await r.json();
 
-    if (!j || !Array.isArray(j.history) || j.history.length === 0) {
-      statusEl.textContent = 'No readings yet (send some gas readings first)';
-      return;
+      const rows = Array.isArray(j.history) ? j.history : [];
+      const labels = rows.map(h => new Date(h.time || h.ts).toLocaleString());
+      const co2    = rows.map(h => (h.ppm?.co2 ?? null));
+      const nh3    = rows.map(h => (h.ppm?.nh3 ?? null));
+
+      const canvas = document.getElementById('gasChart');
+      if (!canvas) {
+        console.warn('gasChart canvas not found');
+        return;
+      }
+      const ctx = canvas.getContext('2d');
+
+      // No data? show a small note under the canvas and bail
+      const noteSel = document.getElementById('chartNote') || (() => {
+        const p = document.createElement('div');
+        p.id = 'chartNote';
+        p.style.fontSize = '12px';
+        p.style.marginTop = '6px';
+        canvas.parentElement.appendChild(p);
+        return p;
+      })();
+      noteSel.textContent = rows.length
+        ? `Plotted ${rows.length} reading(s)`
+        : 'No readings yet – send gas data or save a snapshot.';
+
+      if (!window.gasChart) {
+        window.gasChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              { label: 'CO₂ (ppm)', data: co2, borderColor: '#ef4444', tension: 0.25 },
+              { label: 'NH₃ (ppm)', data: nh3, borderColor: '#3b82f6', tension: 0.25 },
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { position: 'bottom' } },
+            scales: { y: { beginAtZero: true } }
+          }
+        });
+      } else {
+        // IMPORTANT: update the SAME object you created above
+        const c = window.gasChart;
+        c.data.labels = labels;
+        c.data.datasets[0].data = co2;
+        c.data.datasets[1].data = nh3;
+        c.update();
+      }
+    } catch (err) {
+      console.error('loadChart() error:', err);
+      const note = document.getElementById('chartNote');
+      if (note) note.textContent = 'Chart error – see console';
     }
-
-    // ✅ Use epoch ms (ts) if present; otherwise try parsing time
-    const labels = j.history.map(h => {
-      const ms = h.ts ?? Date.parse(h.time);
-      return isNaN(ms) ? 'Unknown' : new Date(ms).toLocaleString();
-    });
-    const co2 = j.history.map(h => h?.ppm?.co2 ?? null);
-    const nh3 = j.history.map(h => h?.ppm?.nh3 ?? null);
-
-    const canvas = document.getElementById('gasChart');
-    canvas.style.minHeight = '200px';
-    canvas.style.border = '1px solid #e5e7eb';
-    const ctx = canvas.getContext('2d');
-
-    if (!window.gasChart){
-      window.gasChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
-            { label: 'CO₂ (ppm)', data: co2, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.15)', tension: .25, pointRadius: 2 },
-            { label: 'NH₃ (ppm)', data: nh3, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.15)', tension: .25, pointRadius: 2 }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'bottom' } },
-          scales: { y: { beginAtZero: true }, x: { grid: { display:false } } }
-        }
-      });
-    } else {
-      gasChart.data.labels = labels;
-      gasChart.data.datasets[0].data = co2;
-      gasChart.data.datasets[1].data = nh3;
-      gasChart.update();
-    }
-
-    statusEl.textContent = `Plotted ${j.history.length} reading(s)`;
-  } catch (err) {
-    statusEl.textContent = 'Chart error (see console)';
-    console.error('loadChart() error:', err);
   }
-}
 loadChart();
 setInterval(loadChart, 60000);  // refresh every minute
 
