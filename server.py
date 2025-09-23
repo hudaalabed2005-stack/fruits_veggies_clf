@@ -433,9 +433,12 @@ async function sendGas(){
 
 function resetGas(){ adc.value="512"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
 function preset(type){
-  if(type==='fresh'){   adc.value="2000"; r0.value="10000"; vref.value="5.0"; }
-  if(type==='spoiled'){ adc.value="800"; r0.value="10000";  vref.value="5.0"; }
+  if(type==='fresh'){   adc.value="210"; r0.value="10000"; vref.value="5.0"; }
+  if(type==='spoiled'){ adc.value="820"; r0.value="10000"; vref.value="5.0"; }
+  if(type==='fermenting'){ adc.value="550"; r0.value="10000"; vref.value="5.0"; }
+  if(type==='ambient'){ adc.value="450"; r0.value="10000"; vref.value="5.0"; }
 }
+
 
   async function saveSnap(){
   const r = await fetch('/cron/snapshot', {method:'POST'});
