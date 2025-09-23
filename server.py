@@ -1,13 +1,13 @@
 import os
 from datetime import datetime, timedelta
+import sqlite3
+from pathlib import Path
+
 import requests
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-import sqlite3
-from pathlib import Path
-from datetime import timedelta
 
 # Roboflow
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
@@ -36,6 +36,8 @@ LAST = {
     "gas": None,
     "gas_updated": None,
 }
+
+# SQLite path
 DB_PATH = Path("data.db")
 
 def init_db():
@@ -57,7 +59,8 @@ def save_reading(ppm: dict):
     cur = con.cursor()
     cur.execute(
         "INSERT INTO gas_readings (ts, co2, nh3, benzene, alcohol) VALUES (?, ?, ?, ?, ?)",
-        (datetime.utcnow().isoformat(), ppm.get("co2"), ppm.get("nh3"),
+        (datetime.utcnow().isoformat(),
+         ppm.get("co2"), ppm.get("nh3"),
          ppm.get("benzene"), ppm.get("alcohol"))
     )
     con.commit()
@@ -116,13 +119,11 @@ def _ppm_from_ratio(ratio: float, a: float, b: float) -> float:
         return 0.0
     return max(0.0, a * (ratio ** b))
 
-from datetime import timedelta
-
 @app.post("/gas")
 def gas(g: GasReading):
     """
     Accept gas info from ESP32/UNO (or the manual UI),
-    compute Rs/ratio/ppm, update LAST, and store in HISTORY.
+    compute Rs/ratio/ppm, update LAST, and persist to DB.
     """
     VREF = g.vref or 3.3
     RL   = g.rl or 10000.0
@@ -153,13 +154,14 @@ def gas(g: GasReading):
         },
     }
 
-LAST["gas"] = data
-LAST["gas_updated"] = datetime.utcnow().isoformat()
+    # update last snapshot
+    LAST["gas"] = data
+    LAST["gas_updated"] = datetime.utcnow().isoformat()
 
-# persist to DB instead of RAM
-save_reading(data["ppm"])
+    # persist to DB
+    save_reading(data["ppm"])
 
-return {"ok": True, "data": data}
+    return {"ok": True, "data": data}
 
 @app.get("/history")
 def history():
