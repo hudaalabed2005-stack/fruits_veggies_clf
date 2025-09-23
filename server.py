@@ -237,21 +237,29 @@ def welcome():
   <meta charset="UTF-8">
   <title>Welcome • Fruit Detector</title>
   <style>
-    body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;color:#fff;min-height:100vh;
-         background:url('https://i.pinimg.com/originals/30/ab/43/30ab43926be6852d3b03572459ab847d.gif') center/cover no-repeat fixed;
-         display:flex;align-items:center;justify-content:center;}
-    body::before{content:"";position:fixed;inset:0;background:linear-gradient(to bottom right,rgba(0,0,0,.35),rgba(0,0,0,.55));pointer-events:none;}
-    .wrap{position:relative;text-align:center;padding:48px 40px;max-width:900px;width:92%;
-          background:rgba(0,0,0,.30);border:1px solid rgba(255,255,255,.15);border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,.45);
-          backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
-    h1{font-size:clamp(2rem,4vw,3rem);margin:0 0 12px;letter-spacing:.5px;}
-    p{font-size:1.05rem;opacity:.95;margin:0 auto 22px;max-width:760px;line-height:1.6}
-    .cta{display:inline-block;margin-top:8px;padding:14px 26px;font-weight:800;letter-spacing:.2px;color:#0b3d2e;
-         background:linear-gradient(135deg,#7CFFCB,#4ADE80);border:none;border-radius:12px;text-decoration:none;
-         box-shadow:0 8px 24px rgba(16,185,129,.35);transition:transform .15s,box-shadow .15s,opacity .15s;}
-    .cta:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(16,185,129,.45);}
-    .badge{display:inline-flex;gap:8px;padding:8px 12px;border-radius:999px;font-weight:700;color:#0b3d2e;background:rgba(255,255,255,.9);
-           box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);margin-bottom:14px}
+    body{
+      margin:0; font-family:Inter,Arial,Helvetica,sans-serif; color:#fff; min-height:100vh;
+      background:url('https://i.pinimg.com/originals/30/ab/43/30ab43926be6852d3b03572459ab847d.gif') center/cover no-repeat fixed;
+      display:flex; align-items:center; justify-content:center;
+    }
+    body::before{content:""; position:fixed; inset:0; background:linear-gradient(to bottom right,rgba(0,0,0,.35),rgba(0,0,0,.55)); pointer-events:none;}
+    .wrap{
+      position:relative; text-align:center; padding:48px 40px; max-width:900px; width:92%;
+      background:rgba(0,0,0,.30); border:1px solid rgba(255,255,255,.15); border-radius:20px; box-shadow:0 20px 60px rgba(0,0,0,.45);
+      backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+    }
+    h1{font-size:clamp(2rem,4vw,3rem); margin:0 0 12px; letter-spacing:.5px;}
+    p{font-size:1.05rem; opacity:.95; margin:0 auto 22px; max-width:760px; line-height:1.6}
+    .cta{
+      display:inline-block; margin-top:8px; padding:14px 26px; font-weight:800; letter-spacing:.2px; color:#0b3d2e;
+      background:linear-gradient(135deg,#7CFFCB,#4ADE80); border:none; border-radius:12px; text-decoration:none;
+      box-shadow:0 8px 24px rgba(16,185,129,.35); transition:transform .15s, box-shadow .15s, opacity .15s;
+    }
+    .cta:hover{transform:translateY(-2px); box-shadow:0 12px 28px rgba(16,185,129,.45);}
+    .badge{
+      display:inline-flex; gap:8px; padding:8px 12px; border-radius:999px; font-weight:700; color:#0b3d2e; background:rgba(255,255,255,.9);
+      box-shadow:inset 0 0 0 1px rgba(0,0,0,.06); margin-bottom:14px
+    }
   </style>
 </head>
 <body>
@@ -264,6 +272,7 @@ def welcome():
   </div>
 </body>
 </html>
+
     """
 
 @app.get("/app", response_class=HTMLResponse)
@@ -275,27 +284,47 @@ def ui():
   <meta charset="UTF-8" />
   <title>Fruit Freshness Detector</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <style>
-    body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#1f2937;
-         background:url('https://i.pinimg.com/originals/3d/91/51/3d9151870044e69f2d93a9d0311275dd.gif') center/cover no-repeat fixed;min-height:100vh}
-    body::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.35);pointer-events:none;z-index:-1}
-    header{background:linear-gradient(90deg,rgba(34,197,94,.95),rgba(22,163,74,.95));padding:18px;text-align:center;color:#fff}
-    .container{width:92%;max-width:1100px;margin:24px auto}
-    .card{background:rgba(255,255,255,.94);border-radius:12px;padding:18px;margin-bottom:18px;box-shadow:0 2px 6px rgba(0,0,0,.1);border:1px solid rgba(0,0,0,.05)}
-    .card h2{margin:0 0 12px;color:#16a34a;font-size:1.2rem;border-left:4px solid #16a34a;padding-left:10px}
-    button{background:#22c55e;color:#fff;padding:10px 14px;border:none;border-radius:8px;cursor:pointer;font-weight:700}
+    body{
+      margin:0; font-family:Arial,Helvetica,sans-serif; color:#1f2937;
+      background:url('https://i.pinimg.com/originals/3d/91/51/3d9151870044e69f2d93a9d0311275dd.gif') center/cover no-repeat fixed; min-height:100vh
+    }
+    body::before{content:""; position:fixed; inset:0; background:rgba(0,0,0,.35); pointer-events:none; z-index:-1}
+    header{background:linear-gradient(90deg,rgba(34,197,94,.95),rgba(22,163,74,.95)); padding:18px; text-align:center; color:#fff}
+    .container{width:92%; max-width:1100px; margin:24px auto}
+    .card{
+      background:rgba(255,255,255,.94); border-radius:12px; padding:18px; margin-bottom:18px;
+      box-shadow:0 2px 6px rgba(0,0,0,.1); border:1px solid rgba(0,0,0,.05)
+    }
+    .card h2{margin:0 0 12px; color:#16a34a; font-size:1.2rem; border-left:4px solid #16a34a; padding-left:10px}
+    button{background:#22c55e; color:#fff; padding:10px 14px; border:none; border-radius:8px; cursor:pointer; font-weight:700}
     button:hover{background:#16a34a}
-    button.secondary{background:#e5f7ec;color:#166534;border:1px solid #bbf7d0}
-    button.gray{background:#f3f4f6;color:#111827;border:1px solid #e5e7eb}
-    input[type=file],input[type=number]{padding:8px;border:1px solid #d1d5db;border-radius:6px;background:#fff}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .pill{padding:6px 10px;border-radius:999px;font-weight:600;font-size:.9rem;border:1px solid #d1d5db;background:#fff}
-    .ok{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0}.bad{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
-    .big{font-size:22px;font-weight:800;margin-top:10px}
-    img,video,canvas{max-width:100%;border-radius:10px;margin-top:10px}
-    pre{white-space:pre-wrap;background:#0b1220;color:#e5e7eb;border-radius:8px;padding:12px;max-height:320px;overflow:auto}
-    footer{text-align:center;padding:16px;background:rgba(238,238,238,.92);color:#111827;margin-top:20px;font-size:.9rem}
+    button.secondary{background:#e5f7ec; color:#166534; border:1px solid #bbf7d0}
+    button.gray{background:#f3f4f6; color:#111827; border:1px solid #e5e7eb}
+    input[type=file], input[type=number]{padding:8px; border:1px solid #d1d5db; border-radius:6px; background:#fff}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .pill{padding:6px 10px; border-radius:999px; font-weight:600; font-size:.9rem; border:1px solid #d1d5db; background:#fff}
+    .ok{background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0}
+    .bad{background:#fef2f2; color:#991b1b; border:1px solid #fecaca}
+    .warn{background:#fffbeb; color:#92400e; border:1px solid #fde68a}
+    .big{font-size:22px; font-weight:800; margin-top:10px}
+    img,video,canvas{max-width:100%; border-radius:10px; margin-top:10px}
+    pre{white-space:pre-wrap; background:#0b1220; color:#e5e7eb; border-radius:8px; padding:12px; max-height:320px; overflow:auto}
+    footer{text-align:center; padding:16px; background:rgba(238,238,238,.92); color:#111827; margin-top:20px; font-size:.9rem}
+
+    /* >>> Chart containment to prevent infinite growth */
+    .chart-wrap{
+      position:relative;
+      height:260px;     /* lock height */
+      width:100%;
+      overflow:hidden;  /* no runaway scroll */
+    }
+    .chart-empty{
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      color:#6b7280; font-size:.95rem; pointer-events:none;
+    }
   </style>
 </head>
 <body>
@@ -354,44 +383,40 @@ def ui():
     <!-- Chart -->
     <div class="card">
       <h2>4) Gas Chart (Last 2 Days)</h2>
-      <canvas id="gasChart" height="120"></canvas>
-      <div id="chartStatus" style="font-size:.9rem;opacity:.8;margin-top:8px"></div>
+      <div class="chart-wrap">
+        <canvas id="gasChart"></canvas>
+        <div id="chartEmpty" class="chart-empty">No readings yet — send gas data or save a snapshot.</div>
+      </div>
     </div>
   </div>
 
   <footer>© 2025 Fruit Detector • FastAPI + Roboflow + MQ-135</footer>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script>
-  // ---------- small helpers ----------
+  <script>
+  "use strict";
+
+  // ---------- helper badges ----------
   const badge = (t, c) => `<span class="pill ${c}">${t}</span>`;
   const GAS_LS_KEY = "gas_history_cache_v1";
 
-  // Gracefully ensure Chart.js exists (fallback if CDN is blocked)
-  async function ensureChartJs() {
-    if (window.Chart) return;
-    await new Promise((res, rej) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js";
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-  }
-
-  // ---------- Vision helpers (unchanged) ----------
+  // ---------- Vision ----------
   function clearVision(){
     preview.src=''; preview.style.display='none';
     video.style.display='none'; canvas.style.display='none';
     visionBadge.style.display='none'; visionTop.textContent='';
   }
-  function clearAll(){ clearVision(); gasBadges.innerHTML=''; decision.className='big'; decision.textContent=''; raw.textContent=''; }
+  function clearAll(){
+    clearVision(); gasBadges.innerHTML=''; decision.className='big';
+    decision.textContent=''; raw.textContent='';
+  }
 
   async function predictFile(){
     const f = file.files[0]; if(!f){ alert('Choose an image'); return; }
     preview.src = URL.createObjectURL(f); preview.style.display='block';
     const fd = new FormData(); fd.append('image', f, f.name);
     const r = await fetch('/predict', { method:'POST', body:fd }); const j = await r.json();
-    let top = null; if(j.predictions && j.predictions.length){ top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; }
+    let top = null;
+    if(j.predictions?.length){ top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; }
     if(top){
       visionBadge.style.display='inline-block';
       const lbl = String(top.class || '?');
@@ -417,7 +442,7 @@ def ui():
     canvas.toBlob(async b=>{
       const fd = new FormData(); fd.append('image', b, 'snapshot.jpg');
       const r = await fetch('/predict',{method:'POST', body:fd}); const j = await r.json();
-      let top = null; if(j.predictions && j.predictions.length){ top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; }
+      let top = null; if(j.predictions?.length){ top = j.predictions.sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0]; }
       if(top){
         visionBadge.style.display='inline-block';
         const lbl = String(top.class || '?');
@@ -429,25 +454,24 @@ def ui():
     }, 'image/jpeg', 0.92);
   }
 
-  // ---------- Gas form actions ----------
+  // ---------- Gas ----------
   async function sendGas(){
     const body = {
       adc: parseInt(adc.value || '0'),
-      vref: parseFloat(vref.value || '5.0'),  // default 5V (UNO)
+      vref: parseFloat(vref.value || '5.0'), // default UNO 5V
       rl: parseInt(rl.value || '10000'),
       r0: parseInt(r0.value || '10000'),
-      adc_max: 1023                            // force UNO scale
+      adc_max: 1023                     // UNO ADC scale
     };
     await fetch('/gas', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     await refresh();
-    await loadChart(true);  // also refresh chart
+    await loadChart(true);
   }
   function resetGas(){ adc.value="1800"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
   function preset(type){ if(type==='fresh'){ adc.value="1200"; r0.value="12000"; } if(type==='spoiled'){ adc.value="2500"; r0.value="8000"; } }
 
   async function saveSnap(){
-    const r = await fetch('/cron/snapshot', {method:'POST'});
-    const j = await r.json();
+    const r = await fetch('/cron/snapshot', {method:'POST'}); const j = await r.json();
     if(j.ok){ await loadChart(true); alert('Snapshot saved ✔'); }
     else    { alert('No reading to save yet. Send a gas reading first.'); }
   }
@@ -459,7 +483,6 @@ def ui():
     gasBadges.innerHTML = [
       badge(`CO₂ ${g.co2??'—'} ppm`, gf.co2_high ? 'bad' : 'ok'),
       badge(`NH₃ ${g.nh3??'—'} ppm`, gf.nh3_high ? 'bad' : 'ok'),
-      // we show Alcohol as a crude VOC proxy; you can switch to benzene if preferred
       badge(`VOC ${g.alcohol??'—'} eq`, gf.voc_high ? 'warn' : 'ok')
     ].join(' ');
     decision.className = 'big ' + (s.decision === 'SPOILED' ? 'bad' : 'ok');
@@ -468,120 +491,69 @@ def ui():
   }
   refresh(); setInterval(refresh, 2000);
 
-  // ---------- Pretty Chart (CO2 + NH3 + Benzene) ----------
+  // ---------- Chart (pretty + stable) ----------
   let gasChart = null;
+  const chartEmpty = document.getElementById('chartEmpty');
 
-  function saveCache(rows){
-    try { localStorage.setItem(GAS_LS_KEY, JSON.stringify(rows.slice(-300))); } catch(_) {}
-  }
-  function loadCache(){
-    try { return JSON.parse(localStorage.getItem(GAS_LS_KEY) || "[]"); } catch(_) { return []; }
-  }
+  function saveCache(rows){ try{ localStorage.setItem(GAS_LS_KEY, JSON.stringify(rows.slice(-300))); }catch(_){} }
+  function loadCache(){ try{ return JSON.parse(localStorage.getItem(GAS_LS_KEY) || "[]"); }catch(_){ return []; } }
 
   function buildGradient(ctx, color){
-    const g = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
-    // soft fill from color to transparent
+    const g = ctx.createLinearGradient(0,0,0,ctx.canvas.height);
     g.addColorStop(0,  color + "AA");
     g.addColorStop(1,  color + "00");
     return g;
   }
 
   async function loadChart(forceFetch=false){
-    await ensureChartJs();
+    const canvas = document.getElementById('gasChart'); if(!canvas) return;
+    const ctx = canvas.getContext('2d'); if(!ctx) return;
 
-    const canvas = document.getElementById('gasChart');
-    if(!canvas){ return; }
-    const ctx = canvas.getContext('2d');
-    if(!ctx){ return; }
-
-    // fetch server history (or fallback to cache)
+    // 1) Grab rows (cache first for instant paint, then refresh)
     let rows = [];
-    try{
-      if (forceFetch) {
-        const r = await fetch('/history', {cache: "no-store"});
+    if (!forceFetch){ rows = loadCache(); setTimeout(()=>loadChart(true), 100); }
+    else{
+      try{
+        const r = await fetch('/history', {cache:"no-store"});
         const j = await r.json();
-        if (Array.isArray(j.history)) rows = j.history;
-      } else {
-        // First use cache (fast paint), then refresh from server
-        rows = loadCache();
-        setTimeout(()=>loadChart(true), 100); // background refresh
-      }
-    }catch(_){ /* network error -> keep rows empty */ }
+        if(Array.isArray(j.history)) rows = j.history;
+      }catch(_){}
+    }
+    if (!rows.length) rows = loadCache();   // still empty? use cache
 
-    // If still empty, keep whatever the cache has
-    if (!rows.length) rows = loadCache();
-
+    // 2) Prepare series
     const labels = rows.map(h => new Date(h.time || h.ts).toLocaleString());
-    const co2    = rows.map(h => (h.ppm?.co2     ?? null));
-    const nh3    = rows.map(h => (h.ppm?.nh3     ?? null));
-    const benz   = rows.map(h => (h.ppm?.benzene ?? null));
+    const co2    = rows.map(h => h?.ppm?.co2     ?? null);
+    const nh3    = rows.map(h => h?.ppm?.nh3     ?? null);
+    const benz   = rows.map(h => h?.ppm?.benzene ?? null);
 
-    // keep cache fresh
-    if (rows.length) saveCache(rows);
+    // 3) Toggle empty note
+    chartEmpty.style.display = rows.length ? "none" : "flex";
 
-    // Beauty theme colors (match your green header)
-    const COL = {
-      co2:  "#22c55e",   // green
-      nh3:  "#0ea5e9",   // blue
-      benz: "#f59e0b"    // amber
-    };
+    // 4) Cache latest
+    if(rows.length) saveCache(rows);
 
+    const COL = { co2:"#22c55e", nh3:"#0ea5e9", benz:"#f59e0b" };
     const ds = [
-      {
-        label: "CO₂ (ppm)",
-        data: co2,
-        tension: 0.3,
-        borderColor: COL.co2,
-        pointRadius: 0,
-        fill: true,
-        backgroundColor: buildGradient(ctx, COL.co2)
-      },
-      {
-        label: "NH₃ (ppm)",
-        data: nh3,
-        tension: 0.3,
-        borderColor: COL.nh3,
-        pointRadius: 0,
-        fill: true,
-        backgroundColor: buildGradient(ctx, COL.nh3)
-      },
-      {
-        label: "Benzene (ppm)",
-        data: benz,
-        tension: 0.3,
-        borderColor: COL.benz,
-        pointRadius: 0,
-        fill: true,
-        backgroundColor: buildGradient(ctx, COL.benz)
-      }
+      { label:"CO₂ (ppm)",   data:co2,  tension:.3, borderColor:COL.co2,  pointRadius:0, fill:true, backgroundColor:buildGradient(ctx, COL.co2) },
+      { label:"NH₃ (ppm)",   data:nh3,  tension:.3, borderColor:COL.nh3,  pointRadius:0, fill:true, backgroundColor:buildGradient(ctx, COL.nh3) },
+      { label:"Benzene (ppm)", data:benz, tension:.3, borderColor:COL.benz, pointRadius:0, fill:true, backgroundColor:buildGradient(ctx, COL.benz) }
     ];
-
     const options = {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: "index", intersect: false },
-      plugins: {
-        legend: { position: "bottom", labels: { boxWidth: 12 } },
-        tooltip: { backgroundColor: "rgba(0,0,0,.8)" }
-      },
-      scales: {
-        x: {
-          ticks: { autoSkip: true, maxTicksLimit: 8 },
-          grid: { display: false }
-        },
-        y: {
-          beginAtZero: true,
-          grid: { color: "rgba(0,0,0,.05)" }
-        }
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:"index", intersect:false },
+      plugins:{ legend:{ position:"bottom", labels:{ boxWidth:12 } }, tooltip:{ backgroundColor:"rgba(0,0,0,.8)" } },
+      scales:{
+        x:{ ticks:{ autoSkip:true, maxTicksLimit:8 }, grid:{ display:false } },
+        y:{ beginAtZero:true, grid:{ color:"rgba(0,0,0,.05)" } }
       }
     };
 
-    // Create once, then update in-place so it never "disappears"
-    if (!gasChart) {
-      // give the canvas some height so it’s visible even with few points
-      canvas.style.height = "260px";
-      gasChart = new Chart(ctx, { type: "line", data: { labels, datasets: ds }, options });
-    } else {
+    // 5) Create once, update forever
+    if (!gasChart){
+      canvas.style.height = "260px"; // ensure visible height
+      gasChart = new Chart(ctx, { type:"line", data:{ labels, datasets: ds }, options });
+    }else{
       gasChart.data.labels = labels;
       gasChart.data.datasets[0].data = co2;
       gasChart.data.datasets[1].data = nh3;
@@ -590,11 +562,11 @@ def ui():
     }
   }
 
-  // initial paint + periodic refresh (keeps it alive across manual page reloads)
+  // first paint + periodic auto-refresh
   loadChart(false);
-  setInterval(()=>loadChart(true), 60_000); // refresh every minute
-</script>
-
+  setInterval(()=>loadChart(true), 60_000);
+  </script>
 </body>
 </html>
+
     """
