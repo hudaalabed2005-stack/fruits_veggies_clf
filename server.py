@@ -103,17 +103,16 @@ async def predict(image: UploadFile = File(...)):
 
 # Gas model
 class GasReading(BaseModel):
-    # either vrl or adc
+
     vrl: float | None = None
     adc: int | None = None
-    adc_max: int | None = None   # 4095 (ESP32) or 1023 (UNO) if sending "adc"
-    vref: float | None = 3.3
+    adc_max: int | None = 1023      # default UNO 10-bit
+    vref: float | None = 5.0        # default UNO 5.0V reference
     rl:   float | None = 10000.0
-    rs:   float | None = None    # precomputed Rs (rarely used)
-    r0:   float | None = None    # baseline in clean air (important for ppm)
+    rs:   float | None = None
+    r0:   float | None = None
 
 def _ppm_from_ratio(ratio: float, a: float, b: float) -> float:
-    """Classic MQ-135 power-law curve helper."""
     if ratio is None or ratio <= 0:
         return 0.0
     return max(0.0, a * (ratio ** b))
@@ -124,24 +123,24 @@ def gas(g: GasReading):
     Accept gas info from ESP32/UNO (or the manual UI),
     compute Rs/ratio/ppm, update LAST, and persist to DB.
     """
-    VREF = g.vref or 3.3
-    RL   = g.rl or 10000.0
+    VREF = float(g.vref or 5.0)
+    RL   = float(g.rl or 10000.0)
 
     # If only ADC is provided, compute VRL from it.
     if g.vrl is None and g.adc is not None:
-        adc_max = g.adc_max if g.adc_max is not None else (4095 if g.adc > 1023 else 1023)
-        g.vrl = (g.adc / float(adc_max)) * VREF
+        adc_max = int(g.adc_max or 1023)           # UNO default
+        g.vrl = (float(g.adc) / float(adc_max)) * VREF
 
     if g.vrl is None and g.rs is None:
         return {"error": "Send at least one of: vrl, adc, or rs."}
 
     # Rs from divider if not provided
-    rs = g.rs if g.rs is not None else ((VREF - g.vrl) * RL) / max(0.001, g.vrl)
-    r0 = g.r0 or rs
+    rs = float(g.rs) if g.rs is not None else ((VREF - g.vrl) * RL) / max(0.001, g.vrl)
+    r0 = float(g.r0) if g.r0 is not None else rs
     ratio = rs / max(1e-6, r0)
 
     data = {
-        "vrl": round(g.vrl, 3) if g.vrl is not None else None,
+        "vrl": round(float(g.vrl), 3) if g.vrl is not None else None,
         "rs": round(rs, 1),
         "r0": round(r0, 1),
         "ratio": round(ratio, 3),
@@ -153,14 +152,11 @@ def gas(g: GasReading):
         },
     }
 
-    # update last snapshot
     LAST["gas"] = data
     LAST["gas_updated"] = datetime.utcnow().isoformat()
-
-    # persist to DB
     save_reading(data["ppm"])
-
     return {"ok": True, "data": data}
+
 @app.post("/cron/snapshot")
 def cron_snapshot():
     """Store whatever is in LAST['gas'] right now."""
@@ -332,7 +328,7 @@ def ui():
       <h2>2) Gas Sensor Reading</h2>
       <div class="row" style="margin-bottom:8px">
         ADC <input id="adc" type="number" value="1800" />
-        Vref <input id="vref" type="number" value="3.3" step="0.1" />
+        Vref <input id="vref" type="number" value="5.0" step="0.1" />
         RL(Ω) <input id="rl" type="number" value="10000" />
         R0(Ω) <input id="r0" type="number" value="10000" />
         <button onclick="sendGas()">Send</button>
@@ -418,19 +414,28 @@ def ui():
       }, 'image/jpeg', 0.92);
     }
 
-    async function sendGas(){
-      const body = {
-        adc: parseInt(adc.value || '0'),
-        vref: parseFloat(vref.value || '3.3'),
-        rl: parseInt(rl.value || '10000'),
-        r0: parseInt(r0.value || '10000'),
-      };
-      await fetch('/gas', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      await refresh();
-      await loadChart();
-    }
-    function resetGas(){ adc.value="1800"; vref.value="3.3"; rl.value="10000"; r0.value="10000"; }
-    function preset(type){ if(type==='fresh'){ adc.value="1200"; r0.value="12000"; } if(type==='spoiled'){ adc.value="2500"; r0.value="8000"; } }
+async function sendGas(){
+  const body = {
+    adc:  parseInt(adc.value || '0'),
+    adc_max: 1023,     
+    vref: parseFloat(vref.value || '5.0'),
+    rl:   parseInt(rl.value || '10000'),
+    r0:   parseInt(r0.value || '10000'),
+  };
+  await fetch('/gas', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  await refresh();
+  await loadChart();
+}
+
+function resetGas(){ adc.value="512"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
+function preset(type){
+  if(type==='fresh'){   adc.value="350"; r0.value="12000"; vref.value="5.0"; }
+  if(type==='spoiled'){ adc.value="800"; r0.value="8000";  vref.value="5.0"; }
+}
 
   async function saveSnap(){
   const r = await fetch('/cron/snapshot', {method:'POST'});
