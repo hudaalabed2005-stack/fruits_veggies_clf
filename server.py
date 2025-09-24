@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-# roboflowr
+# roboflow
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
 PROJECT = "fresh-or-rotten-detection-briat"
 VERSION = "1"
