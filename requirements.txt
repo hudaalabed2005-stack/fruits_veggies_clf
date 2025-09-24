@@ -1,12 +1,10 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
+torch==2.4.0
+torchvision==0.20.1
 fastapi
-uvicorn[standard]
-pillow
-python-multipart
+uvicorn
 requests
-gdown
-numpy
+python-multipart
+pillow
 
-torch+cpu
-torchvision+cpu
