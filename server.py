@@ -9,27 +9,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-# roboflow
+# ---------- Roboflow config ----------
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
+ROBOFLOW_WORKSPACE = os.getenv("ROBOFLOW_WORKSPACE", "").strip()  # optional
 PROJECT = "fresh-or-rotten-detection-briat"
 VERSION = "1"
-CLASSIFY_URL = f"https://classify.roboflow.com/{PROJECT}/{VERSION}"
+
+# Prefer workspace-prefixed path if provided
+def _rf_classify_url():
+    if ROBOFLOW_WORKSPACE:
+        return f"https://classify.roboflow.com/{ROBOFLOW_WORKSPACE}/{PROJECT}/{VERSION}"
+    return f"https://classify.roboflow.com/{PROJECT}/{VERSION}"
+
+CLASSIFY_URL = _rf_classify_url()
 
 if not ROBOFLOW_API_KEY:
     raise RuntimeError("Missing ROBOFLOW_API_KEY environment variable.")
 
-# FastAPI app + CORS 
+# ---------- FastAPI app + CORS ----------
 app = FastAPI(title="Fruit & Gas Cloud API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],      # ok for demo; lock down in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# tiny in-memory cache
+# ---------- tiny in-memory cache ----------
 LAST = {
     "vision": None,
     "vision_updated": None,
@@ -37,7 +45,7 @@ LAST = {
     "gas_updated": None,
 }
 
-# SQLite for gas history
+# ---------- SQLite (gas history) ----------
 DB_PATH = Path("data.db")
 
 def init_db():
@@ -55,6 +63,8 @@ def init_db():
     con.close()
 
 def save_reading(ppm: dict):
+    if not ppm:
+        return
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     cur.execute(
@@ -85,10 +95,10 @@ def load_history_last_days(days: int = 2):
 
 init_db()
 
-#Prediction helpers
+# ---------- Classification helpers ----------
 def extract_top_class(resp_obj):
     """
-    Robustly extract the top class+confidence from Roboflow classification responses.
+    Robustly extract {"label":..., "confidence":...%} from Roboflow classification responses.
     Supports both:
       1) {"predictions":[{"class":"rotten_apple","confidence":0.91}, ...]}
       2) {"predictions":{"rotten_apple":0.91,"fresh_apple":0.09}}
@@ -125,47 +135,50 @@ async def predict(image: UploadFile = File(...)):
     """
     Accept an uploaded image, call Roboflow Classification,
     cache the raw response, return normalized JSON or a helpful error.
+    Tries workspace-prefixed URL with Bearer header first; falls back to query key.
     """
     data = await image.read()
+    headers = {
+        "Authorization": f"Bearer {ROBOFLOW_API_KEY}",
+        "Accept": "application/json"
+    }
+    files = {"file": ("image.jpg", data, image.content_type or "image/jpeg")}
+
+    # 1) Try workspace-prefixed (or no-workspace) with Bearer
     try:
-        # Prefer Authorization header (more reliable than ?api_key=...)
-        headers = {
-            "Authorization": f"Bearer {ROBOFLOW_API_KEY}",
-            "Accept": "application/json"
-        }
-        files = {"file": ("image.jpg", data, image.content_type or "image/jpeg")}
-
         resp = requests.post(CLASSIFY_URL, headers=headers, files=files, timeout=60)
-
-        # Try to extract Roboflow error message if possible
         if resp.status_code == 403:
-            return JSONResponse(
-                {
+            # 2) Fallback: try non-workspace URL + ?api_key
+            fallback_url = f"https://classify.roboflow.com/{PROJECT}/{VERSION}"
+            resp2 = requests.post(
+                fallback_url,
+                params={"api_key": ROBOFLOW_API_KEY},
+                files=files,
+                timeout=60
+            )
+            if resp2.status_code == 403:
+                # Build a helpful error
+                detail = {
                     "error": "roboflow_403",
                     "detail": "Roboflow classification forbidden (403).",
                     "hints": [
-                        "Check ROBOFLOW_API_KEY (regenerate if necessary).",
-                        "Confirm the model path: "
-                        f"{'WORKSPACE/' if WORKSPACE else ''}{PROJECT}/{VERSION}",
-                        "Make sure the model is deployed for Hosted API.",
-                        "Ensure your key has Hosted API permissions and quota."
-                    ],
-                    "endpoint": CLASSIFY_URL
-                },
-                status_code=502
-            )
-
+                        "Confirm ROBOFLOW_API_KEY is valid and has Hosted API access.",
+                        "If your model requires workspace URL, set ROBOFLOW_WORKSPACE env.",
+                        f"Workspace URL tried: {CLASSIFY_URL}",
+                        f"Fallback URL tried:  {fallback_url}?api_key=***",
+                        "Ensure the model is deployed to Hosted API (not just trained).",
+                    ]
+                }
+                return JSONResponse(detail, status_code=502)
+            resp = resp2  # fallback succeeded or at least not 403
         resp.raise_for_status()
         j = resp.json()
-
     except requests.exceptions.RequestException as e:
-        # Network or HTTP error
         return JSONResponse(
             {"error": "roboflow_request_failed", "detail": str(e), "endpoint": CLASSIFY_URL},
             status_code=502
         )
     except ValueError:
-        # Not JSON
         return JSONResponse(
             {"error": "roboflow_non_json", "detail": resp.text[:500], "endpoint": CLASSIFY_URL},
             status_code=502
@@ -175,14 +188,13 @@ async def predict(image: UploadFile = File(...)):
     LAST["vision_updated"] = datetime.utcnow().isoformat()
     return JSONResponse(j)
 
-
-#Gas model
+# ---------- Gas model ----------
 class GasReading(BaseModel):
     # either vrl or adc
     vrl: float | None = None
     adc: int | None = None
-    adc_max: int | None = 4095      # default UNO 10-bit
-    vref: float | None = 3.3        # default UNO 5.0V reference
+    adc_max: int | None = 4095      # ESP32 12-bit default; UI can override to 1023 for UNO
+    vref: float | None = 3.3        # ESP32 default; UI can override to 5.0 for UNO
     rl:   float | None = 10000.0
     rs:   float | None = None
     r0:   float | None = None
@@ -201,16 +213,19 @@ def gas(g: GasReading):
     VREF = float(g.vref or 3.3)
     RL   = float(g.rl or 10000.0)
 
+    used_adc = None
+    used_adc_max = int(g.adc_max or 4095)
+
     # If only ADC is provided, compute VRL from it.
     if g.vrl is None and g.adc is not None:
-        adc_max = int(g.adc_max or 4095)           # UNO default
-        g.vrl = (float(g.adc) / float(adc_max)) * VREF
+        used_adc = int(g.adc)
+        g.vrl = (float(used_adc) / float(used_adc_max)) * VREF
 
     if g.vrl is None and g.rs is None:
-        return {"error": "Send at least one of: vrl, adc, or rs."}
+        return JSONResponse({"error": "Send at least one of: vrl, adc, or rs."}, status_code=400)
 
     # Rs from divider if not provided
-    rs = float(g.rs) if g.rs is not None else ((VREF - g.vrl) * RL) / max(0.001, g.vrl)
+    rs = float(g.rs) if g.rs is not None else ((VREF - float(g.vrl)) * RL) / max(0.001, float(g.vrl))
     r0 = float(g.r0) if g.r0 is not None else rs
     ratio = rs / max(1e-6, r0)
 
@@ -225,6 +240,13 @@ def gas(g: GasReading):
             "benzene": round(_ppm_from_ratio(ratio, 76.63,   -2.1680), 1),
             "alcohol": round(_ppm_from_ratio(ratio, 77.255,  -3.18),   1),
         },
+        "raw": {  # keep raw inputs so UI can display ADC, etc.
+            "adc": used_adc,
+            "adc_max": used_adc_max,
+            "vref": VREF,
+            "rl": RL,
+            "r0": r0
+        }
     }
 
     LAST["gas"] = data
@@ -245,23 +267,28 @@ def history():
     """Return last 2 days of gas readings from DB."""
     return {"history": load_history_last_days(days=2)}
 
-#Summary (vision + gas)
+# ---------- Summary (vision + gas) ----------
 def _summarize(last: dict) -> dict:
-    """Compress raw Roboflow JSON + gas into one friendly decision."""
-    pred = extract_top_class(last["vision"])  # <— works for classification
+    """
+    Compress raw Roboflow JSON + gas into one friendly decision.
+    Current rule = OR: model says 'rotten_*' OR any gas threshold hits.
+    """
+    pred = extract_top_class(last.get("vision"))
 
-    gas = last["gas"]["ppm"] if last["gas"] else {}
-    co2  = gas.get("co2")
-    nh3  = gas.get("nh3")
-    benz = gas.get("benzene")
-    alco = gas.get("alcohol")
+    gas_ppm = (last.get("gas") or {}).get("ppm", {})
+    gas_raw = (last.get("gas") or {}).get("raw", {})
+
+    co2  = gas_ppm.get("co2")
+    nh3  = gas_ppm.get("nh3")
+    benz = gas_ppm.get("benzene")
+    alco = gas_ppm.get("alcohol")
 
     # Thresholds to tune with real data
     co2_hi = (co2 is not None) and (co2 >= 2000)
     nh3_hi = (nh3 is not None) and (nh3 >= 15)
     voc_hi = (benz or 0) >= 5 or (alco or 0) >= 10
 
-    # Any class name starting with/containing 'rotten' => rotten
+    # Vision rule: any label containing 'rotten'
     model_rotten = bool(
         pred and isinstance(pred.get("label"), str) and ("rotten" in pred["label"].lower())
     )
@@ -270,6 +297,7 @@ def _summarize(last: dict) -> dict:
     return {
         "vision": pred,  # e.g. {"label":"rotten_apple","confidence":91.5}
         "gas_ppm": {"co2": co2, "nh3": nh3, "benzene": benz, "alcohol": alco},
+        "gas_raw": gas_raw,
         "gas_flags": {"co2_high": co2_hi, "nh3_high": nh3_hi, "voc_high": voc_hi},
         "decision": "SPOILED" if spoiled else "FRESH",
     }
@@ -295,7 +323,11 @@ def export_csv():
 def summary():
     return _summarize(LAST)
 
-#UI
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "time": datetime.utcnow().isoformat()}
+
+# ---------- UI pages ----------
 @app.get("/", response_class=HTMLResponse)
 def welcome():
     return """
@@ -340,7 +372,6 @@ def welcome():
   </div>
 </body>
 </html>
-
     """
 
 @app.get("/app", response_class=HTMLResponse)
