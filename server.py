@@ -8,12 +8,14 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+
 # --- Local Image Classifier (PyTorch) ---
 import torch
 import torch.nn as nn
 from PIL import Image
 from io import BytesIO
 from torchvision import transforms as T
+import numpy as np  # <-- needed for argmax
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -38,13 +40,13 @@ _model = None
 def _rebuild_arch_from_env(num_classes: int):
     """Rebuild a known backbone if only a state_dict was saved."""
     if ARCH.lower() == "efficientnet_b0":
-        from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
+        from torchvision.models import efficientnet_b0
         m = efficientnet_b0(weights=None)
         in_feats = m.classifier[1].in_features
         m.classifier[1] = nn.Linear(in_feats, num_classes)
         return m
     if ARCH.lower() == "mobilenet_v2":
-        from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+        from torchvision.models import mobilenet_v2
         m = mobilenet_v2(weights=None)
         in_feats = m.classifier[1].in_features
         m.classifier[1] = nn.Linear(in_feats, num_classes)
@@ -182,10 +184,10 @@ def load_history_last_days(days: int = 2):
 
 init_db()
 
-# ---------- Classification helpers ----------
+# ---------- Classification helpers (legacy compat if needed) ----------
 def extract_top_class(resp_obj):
     """
-    Robustly extract {"label":..., "confidence":...%} from Roboflow classification responses.
+    Robustly extract {"label":..., "confidence":...%} from legacy classification responses.
     Supports both:
       1) {"predictions":[{"class":"rotten_apple","confidence":0.91}, ...]}
       2) {"predictions":{"rotten_apple":0.91,"fresh_apple":0.09}}
@@ -338,12 +340,12 @@ def _summarize(last: dict) -> dict:
     nh3_hi = (nh3 is not None) and (nh3 >= 15)
     voc_hi = (benz or 0) >= 5 or (alco or 0) >= 10
 
-    # Vision rule: any label containing 'rotten'
-    model_rotten = bool(pred and isinstance(pred.get("label"), str) and ("spoiled" in pred["label"].lower()))
+    # Vision rule: label containing 'spoiled' (or legacy 'rotten')
+    model_rotten = bool(pred and isinstance(pred.get("label"), str) and (("spoiled" in pred["label"].lower()) or ("rotten" in pred["label"].lower())))
     spoiled = model_rotten or co2_hi or nh3_hi or voc_hi
 
     return {
-        "vision": pred,  # e.g. {"label":"rotten_apple","confidence":91.5}
+        "vision": pred,  # e.g. {"label":"spoiled","confidence":91.5}
         "gas_ppm": {"co2": co2, "nh3": nh3, "benzene": benz, "alcohol": alco},
         "gas_raw": gas_raw,
         "gas_flags": {"co2_high": co2_hi, "nh3_high": nh3_hi, "voc_high": voc_hi},
@@ -663,7 +665,7 @@ function setStatus(which, state){
   }
 }
 
-/* Show immediate feedback from raw Roboflow JSON (optional) */
+/* Show immediate feedback from raw JSON (compat) */
 function updateVisionFromRaw(j){
   // Case A: list predictions
   if (Array.isArray(j?.predictions) && j.predictions.length) {
@@ -671,7 +673,7 @@ function updateVisionFromRaw(j){
     const lbl = String(pred.class || '?');
     const conf = Number((pred.confidence||0)*100).toFixed(1);
     el.visionBadge.style.display = 'inline-block';
-    const bad = /(^|_|\b)rotten/i.test(lbl);
+    const bad = /(^|_|\\b)(spoiled|rotten)/i.test(lbl);
     el.visionBadge.className = 'pill ' + (bad ? 'bad' : 'ok');
     el.visionBadge.textContent = `${lbl} • ${conf}%`;
     el.visionTop.textContent = lbl.replace(/_/g,' ').toUpperCase();
@@ -683,7 +685,7 @@ function updateVisionFromRaw(j){
     if (items.length){
       const [lbl, conf] = items[0];
       el.visionBadge.style.display = 'inline-block';
-      const bad = /(^|_|\b)rotten/i.test(lbl);
+      const bad = /(^|_|\\b)(spoiled|rotten)/i.test(lbl);
       el.visionBadge.className = 'pill ' + (bad ? 'bad' : 'ok');
       el.visionBadge.textContent = `${lbl} • ${(conf*100).toFixed(1)}%`;
       el.visionTop.textContent = lbl.replace(/_/g,' ').toUpperCase();
@@ -761,10 +763,10 @@ function snap(){
 async function sendGas(){
   const body = {
     adc: parseInt(el.adc.value || '0'),
-    vref: parseFloat(el.vref.value || '3.3'), // 
+    vref: parseFloat(el.vref.value || '3.3'),
     rl: parseInt(el.rl.value || '10000'),
     r0: parseInt(el.r0.value || '10000'),
-    adc_max: 4095                      
+    adc_max: 4095
   };
   setStatus('gas','busy');
   try{
@@ -802,7 +804,7 @@ async function refresh(){
     el.visionBadge.style.display='inline-block';
     const lbl = String(s.vision.label);
     const conf = Number(s.vision.confidence ?? 0).toFixed(1);
-    const bad = /(^|_|\b)rotten/i.test(lbl);
+    const bad = /(^|_|\\b)(spoiled|rotten)/i.test(lbl);
     el.visionBadge.className = 'pill ' + (bad ? 'bad' : 'ok');
     el.visionBadge.textContent = `${lbl} • ${conf}%`;
     el.visionTop.textContent = lbl.replace(/_/g,' ').toUpperCase();
