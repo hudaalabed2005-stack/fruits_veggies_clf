@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 # Roboflow
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
-PROJECT = "fresh-or-rotten-detection-briat/1" 
+PROJECT = "fresh-or-rotten-detection-briat" 
 VERSION = "1"
 DETECT_URL = f"https://detect.roboflow.com/{PROJECT}/{VERSION}"
 
