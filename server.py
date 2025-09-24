@@ -198,7 +198,7 @@ def gas(g: GasReading):
     Accept gas info from ESP32/UNO (or the manual UI),
     compute Rs/ratio/ppm, update LAST, and persist to DB.
     """
-    VREF = float(g.vref or3.3)
+    VREF = float(g.vref or 3.3)
     RL   = float(g.rl or 10000.0)
 
     # If only ADC is provided, compute VRL from it.
