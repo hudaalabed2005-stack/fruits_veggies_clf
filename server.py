@@ -386,6 +386,8 @@ def ui():
     .big{ font-size:22px; font-weight:900; margin-top:10px }
 
     img,video,canvas{ max-width:100%; border-radius:12px; margin-top:10px }
+    /* hide preview until image chosen */
+    #preview{ display:none; }
 
     pre{
       white-space:pre-wrap; background:#0b1220; color:#e5e7eb; border-radius:12px; padding:12px; max-height:320px; overflow:auto;
@@ -433,11 +435,11 @@ def ui():
       <h2>1) Upload or Capture Fruit Image <span id="visionStatus" class="status muted"><span class="dot"></span> idle</span></h2>
       <div class="row">
         <input id="file" type="file" accept="image/*" />
-        <button onclick="predictFile()">🔮 Predict</button>
-        <button class="secondary" onclick="startCam()">📷 Use Webcam</button>
-        <button class="gray" onclick="snap()">📸 Snapshot</button>
-        <button class="gray" onclick="stopCam()">⏹ Stop Camera</button>
-        <button class="gray" onclick="clearVision()">🧹 Clear Image</button>
+        <button type="button" onclick="predictFile()">🔮 Predict</button>
+        <button type="button" class="secondary" onclick="startCam()">📷 Use Webcam</button>
+        <button type="button" class="gray" onclick="snap()">📸 Snapshot</button>
+        <button type="button" class="gray" onclick="stopCam()">⏹ Stop Camera</button>
+        <button type="button" class="gray" onclick="clearVision()">🧹 Clear Image</button>
       </div>
       <video id="video" autoplay playsinline width="320" height="240" style="display:none;background:#000"></video>
       <canvas id="canvas" width="320" height="240" style="display:none"></canvas>
@@ -450,15 +452,15 @@ def ui():
     <div class="card">
       <h2>2) Gas Sensor Reading <span id="gasStatus" class="status muted"><span class="dot" style="background:#0ea5e9"></span> idle</span></h2>
       <div class="row" style="margin-bottom:8px">
-        ADC <input id="adc" type="number" value="1800" />
-        Vref <input id="vref" type="number" value="5.0" step="0.1" />
-        RL(Ω) <input id="rl" type="number" value="10000" />
-        R0(Ω) <input id="r0" type="number" value="10000" />
-        <button onclick="sendGas()">📤 Send</button>
-        <button class="gray" onclick="preset('fresh')">🍏 Fresh Preset</button>
-        <button class="gray" onclick="preset('spoiled')">🍌 Spoiled Preset</button>
-        <button class="gray" onclick="resetGas()">🔁 Reset</button>
-        <button class="gray" onclick="saveSnap()">💾 Save Snapshot</button>
+        ADC <input id="adc" type="number" value="1800" autocomplete="off" />
+        Vref <input id="vref" type="number" value="5.0" step="0.1" autocomplete="off" />
+        RL(Ω) <input id="rl" type="number" value="10000" autocomplete="off" />
+        R0(Ω) <input id="r0" type="number" value="10000" autocomplete="off" />
+        <button type="button" onclick="sendGas()">📤 Send</button>
+        <button type="button" class="gray" onclick="preset('fresh')">🍏 Fresh Preset</button>
+        <button type="button" class="gray" onclick="preset('spoiled')">🍌 Spoiled Preset</button>
+        <button type="button" class="gray" onclick="resetGas()">🔁 Reset</button>
+        <button type="button" class="gray" onclick="saveSnap()">💾 Save Snapshot</button>
       </div>
       <div id="gasBadges" style="margin-top:6px"></div>
     </div>
@@ -468,8 +470,8 @@ def ui():
       <h2>3) Final Decision</h2>
       <div id="decision" class="big"></div>
       <div class="row" style="margin:10px 0">
-        <button class="secondary" onclick="refresh()">🔄 Refresh Summary</button>
-        <button class="gray" onclick="clearAll()">🧹 Clear All</button>
+        <button type="button" class="secondary" onclick="refresh()">🔄 Refresh Summary</button>
+        <button type="button" class="gray" onclick="clearAll()">🧹 Clear All</button>
       </div>
       <pre id="raw"></pre>
     </div>
@@ -485,7 +487,7 @@ def ui():
 
   </div>
 
-  <footer>© 2025 Fruit Detector • FastAPI + Roboflow + MQ-135</footer>
+  <footer>© 2025 Fruit Detector • FastAPI + ImageClassifier + MQ-135</footer>
 
   <!-- tiny toast -->
   <div id="toast" class="toast">Saved ✔</div>
@@ -493,78 +495,184 @@ def ui():
 <script>
 "use strict";
 
-// ---------- helper badges / toast ----------
+/* ---------- DOM helpers ---------- */
+const $ = (id) => document.getElementById(id);
+
+// bind all elements once (avoid relying on global ID variables)
+const el = {
+  file:       $('file'),
+  preview:    $('preview'),
+  video:      $('video'),
+  canvas:     $('canvas'),
+  visionBadge:$('visionBadge'),
+  visionTop:  $('visionTop'),
+  gasBadges:  $('gasBadges'),
+  decision:   $('decision'),
+  raw:        $('raw'),
+  visionStatus:$('visionStatus'),
+  gasStatus:  $('gasStatus'),
+  toast:      $('toast'),
+  chartEmpty: $('chartEmpty'),
+  gasChart:   $('gasChart'),
+  // form inputs
+  adc:        $('adc'),
+  vref:       $('vref'),
+  rl:         $('rl'),
+  r0:         $('r0'),
+};
+
+/* ---------- helper badges / toast ---------- */
 const badge = (t, c) => `<span class="pill ${c}">${t}</span>`;
 const GAS_LS_KEY = "gas_history_cache_v1";
+
 function toast(msg){
-  const el = document.getElementById('toast');
-  el.textContent = msg || 'Done';
-  el.classList.add('show');
-  setTimeout(()=> el.classList.remove('show'), 1500);
+  el.toast.textContent = msg || 'Done';
+  el.toast.classList.add('show');
+  setTimeout(()=> el.toast.classList.remove('show'), 1500);
 }
 
-// ---------- Vision ----------
+/* ---------- Vision ---------- */
 function clearVision(){
-  preview.src=''; preview.style.display='none';
-  video.style.display='none'; canvas.style.display='none';
-  visionBadge.style.display='none'; visionTop.textContent='';
+  el.preview.src=''; el.preview.style.display='none';
+  el.video.style.display='none'; el.canvas.style.display='none';
+  el.visionBadge.style.display='none'; el.visionTop.textContent='';
 }
 function clearAll(){
-  clearVision(); gasBadges.innerHTML=''; decision.className='big';
-  decision.textContent=''; raw.textContent='';
+  clearVision(); el.gasBadges.innerHTML=''; el.decision.className='big';
+  el.decision.textContent=''; el.raw.textContent='';
+}
+
+/* Status dots */
+function setStatus(which, state){
+  const statusEl = (which === 'vision') ? el.visionStatus : el.gasStatus;
+  if(!statusEl) return;
+  const color = (which === 'vision') ? '#22c55e' : '#0ea5e9';
+  if(state === 'busy'){
+    statusEl.classList.remove('muted');
+    statusEl.innerHTML = `<span class="dot" style="background:${color}"></span> working…`;
+  } else {
+    statusEl.classList.add('muted');
+    statusEl.innerHTML = `<span class="dot" style="background:${color}"></span> idle`;
+  }
+}
+
+/* Show immediate feedback from raw Roboflow JSON (optional) */
+function updateVisionFromRaw(j){
+  // Case A: list predictions
+  if (Array.isArray(j?.predictions) && j.predictions.length) {
+    const pred = [...j.predictions].sort((a,b)=>(b.confidence||0)-(a.confidence||0))[0];
+    const lbl = String(pred.class || '?');
+    const conf = Number((pred.confidence||0)*100).toFixed(1);
+    el.visionBadge.style.display = 'inline-block';
+    const bad = /(^|_|\b)rotten/i.test(lbl);
+    el.visionBadge.className = 'pill ' + (bad ? 'bad' : 'ok');
+    el.visionBadge.textContent = `${lbl} • ${conf}%`;
+    el.visionTop.textContent = lbl.replace(/_/g,' ').toUpperCase();
+    return;
+  }
+  // Case B: dict mapping class -> confidence
+  if (j && typeof j === 'object' && j.predictions && !Array.isArray(j.predictions)) {
+    const items = Object.entries(j.predictions).sort((a,b)=>b[1]-a[1]);
+    if (items.length){
+      const [lbl, conf] = items[0];
+      el.visionBadge.style.display = 'inline-block';
+      const bad = /(^|_|\b)rotten/i.test(lbl);
+      el.visionBadge.className = 'pill ' + (bad ? 'bad' : 'ok');
+      el.visionBadge.textContent = `${lbl} • ${(conf*100).toFixed(1)}%`;
+      el.visionTop.textContent = lbl.replace(/_/g,' ').toUpperCase();
+    }
+  }
 }
 
 async function predictFile(){
-  const f = file.files[0]; if(!f){ alert('Choose an image'); return; }
-  preview.src = URL.createObjectURL(f); preview.style.display='block';
-  const fd = new FormData(); fd.append('image', f, f.name);
+  const f = el.file.files[0];
+  if (!f) { alert('Choose an image'); return; }
+  el.preview.src = URL.createObjectURL(f);
+  el.preview.style.display = 'block';
+
+  const fd = new FormData();
+  fd.append('image', f, f.name);
+
   setStatus('vision','busy');
-  try{
-    await fetch('/predict', { method:'POST', body:fd });
-    await refresh(); // always read normalized vision from /summary
-  }finally{ setStatus('vision','idle'); }
+  try {
+    const r = await fetch('/predict', { method:'POST', body:fd });
+    let j = null;
+    try { j = await r.json(); } catch (e) { j = {error: 'Bad JSON from server'}; }
+    if (!r.ok || j?.error) {
+      console.error('Predict error:', j?.error || r.statusText);
+      alert('Predict failed: ' + (j?.error || r.statusText));
+      return;
+    }
+    updateVisionFromRaw(j);    // instant feedback
+    await refresh();           // normalized final summary
+  } finally {
+    setStatus('vision','idle');
+  }
 }
 
-let stream=null;
+/* Webcam */
+let stream = null;
+
 async function startCam(){
   try{
     stream = await navigator.mediaDevices.getUserMedia({video:true});
-    video.srcObject = stream; video.style.display='block';
+    el.video.srcObject = stream; el.video.style.display='block';
   }catch(e){ alert('Camera error: '+e); }
 }
-function stopCam(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } video.style.display='none'; }
+function stopCam(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  el.video.style.display='none';
+}
 function snap(){
-  if(!stream){ alert('Start the webcam first'); return; }
-  const ctx = canvas.getContext('2d'); canvas.style.display='block';
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  canvas.toBlob(async b=>{
-    const fd = new FormData(); fd.append('image', b, 'snapshot.jpg');
+  if (!stream) { alert('Start the webcam first'); return; }
+  const ctx = el.canvas.getContext('2d');
+  el.canvas.style.display = 'block';
+  ctx.drawImage(el.video, 0, 0, el.canvas.width, el.canvas.height);
+  el.canvas.toBlob(async (b) => {
+    const fd = new FormData();
+    fd.append('image', b, 'snapshot.jpg');
+
     setStatus('vision','busy');
-    try{
-      await fetch('/predict',{method:'POST', body:fd});
+    try {
+      const r = await fetch('/predict', { method:'POST', body:fd });
+      let j = null;
+      try { j = await r.json(); } catch (e) { j = {error: 'Bad JSON from server'}; }
+      if (!r.ok || j?.error) {
+        console.error('Predict error:', j?.error || r.statusText);
+        alert('Predict failed: ' + (j?.error || r.statusText));
+        return;
+      }
+      updateVisionFromRaw(j);
       await refresh();
-    }finally{ setStatus('vision','idle'); }
+    } finally {
+      setStatus('vision','idle');
+    }
   }, 'image/jpeg', 0.92);
 }
 
-// ---------- Gas ----------
+/* ---------- Gas ---------- */
 async function sendGas(){
   const body = {
-    adc: parseInt(adc.value || '0'),
-    vref: parseFloat(vref.value || '5.0'), // UNO default 5V
-    rl: parseInt(rl.value || '10000'),
-    r0: parseInt(r0.value || '10000'),
+    adc: parseInt(el.adc.value || '0'),
+    vref: parseFloat(el.vref.value || '5.0'), // UNO default 5V
+    rl: parseInt(el.rl.value || '10000'),
+    r0: parseInt(el.r0.value || '10000'),
     adc_max: 1023                           // UNO 10-bit
   };
   setStatus('gas','busy');
   try{
-    await fetch('/gas', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const r = await fetch('/gas', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if(!r.ok){
+      const t = await r.text();
+      alert('Gas send failed: ' + (t || r.statusText));
+      return;
+    }
     await refresh();
     await loadChart(true);
   }finally{ setStatus('gas','idle'); }
 }
-function resetGas(){ adc.value="1800"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
-function preset(type){ if(type==='fresh'){ adc.value="1200"; r0.value="12000"; } if(type==='spoiled'){ adc.value="2500"; r0.value="8000"; } }
+function resetGas(){ el.adc.value="1800"; el.vref.value="5.0"; el.rl.value="10000"; el.r0.value="10000"; }
+function preset(type){ if(type==='fresh'){ el.adc.value="1200"; el.r0.value="12000"; } if(type==='spoiled'){ el.adc.value="2500"; el.r0.value="8000"; } }
 async function saveSnap(){
   const r = await fetch('/cron/snapshot', {method:'POST'});
   const j = await r.json();
@@ -572,50 +680,46 @@ async function saveSnap(){
   else    { alert('No reading to save yet. Send a gas reading first.'); }
 }
 
-// ---------- Status dots ----------
-function setStatus(which, state){
-  const el = (which === 'vision') ? document.getElementById('visionStatus') : document.getElementById('gasStatus');
-  if(!el) return;
-  const dot = el.querySelector('.dot');
-  if(state === 'busy'){ el.classList.remove('muted'); dot.style.background = (which==='vision') ? '#22c55e' : '#0ea5e9'; el.innerHTML = `<span class="dot" style="background:${dot.style.background}"></span> working…`; }
-  else { el.classList.add('muted'); dot.style.background = (which==='vision') ? '#22c55e' : '#0ea5e9'; el.innerHTML = `<span class="dot" style="background:${dot.style.background}"></span> idle`; }
-}
-
-// ---------- Summary ----------
+/* ---------- Summary ---------- */
 async function refresh(){
-  const r = await fetch('/summary'); const s = await r.json();
+  const r = await fetch('/summary', {cache:'no-store'});
+  const s = await r.json();
 
-  // Vision (normalized server output)
-  if (s.vision && s.vision.label){
-    visionBadge.style.display='inline-block';
+  // Vision (normalized server output or error)
+  if (s.vision?.error){
+    el.visionBadge.style.display='inline-block';
+    el.visionBadge.className='pill warn';
+    el.visionBadge.textContent='Vision error';
+    el.visionTop.textContent=s.vision.error;
+  } else if (s.vision && s.vision.label){
+    el.visionBadge.style.display='inline-block';
     const lbl = String(s.vision.label);
     const conf = Number(s.vision.confidence ?? 0).toFixed(1);
-    const bad = /(^|_|\\b)rotten/i.test(lbl);
-    visionBadge.className = 'pill ' + (bad ? 'bad' : 'ok');
-    visionBadge.textContent = `${lbl} • ${conf}%`;
-    visionTop.textContent = lbl.replaceAll('_',' ').toUpperCase();
+    const bad = /(^|_|\b)rotten/i.test(lbl);
+    el.visionBadge.className = 'pill ' + (bad ? 'bad' : 'ok');
+    el.visionBadge.textContent = `${lbl} • ${conf}%`;
+    el.visionTop.textContent = lbl.replace(/_/g,' ').toUpperCase();
   } else {
-    visionBadge.style.display='none';
-    visionTop.textContent = '';
+    el.visionBadge.style.display='none';
+    el.visionTop.textContent = '';
   }
 
   // Gas badges + decision
-  const g = s.gas_ppm || {}, gf = s.gas_flags || {};
-  gasBadges.innerHTML = [
+  const g  = s.gas_ppm || {}, gf = s.gas_flags || {};
+  el.gasBadges.innerHTML = [
     badge(`CO₂ ${g.co2??'—'} ppm`, gf.co2_high ? 'bad' : 'ok'),
     badge(`NH₃ ${g.nh3??'—'} ppm`, gf.nh3_high ? 'bad' : 'ok'),
     badge(`VOC ${g.alcohol??'—'} eq`, gf.voc_high ? 'warn' : 'ok')
   ].join(' ');
 
-  decision.className = 'big ' + (s.decision === 'SPOILED' ? 'bad' : 'ok');
-  decision.textContent = s.decision || '';
-  raw.textContent = JSON.stringify(s, null, 2);
+  el.decision.className = 'big ' + (s.decision === 'SPOILED' ? 'bad' : 'ok');
+  el.decision.textContent = s.decision || '';
+  el.raw.textContent = JSON.stringify(s, null, 2);
 }
 refresh(); setInterval(refresh, 2000);
 
-// ---------- Chart (pretty + stable) ----------
+/* ---------- Chart (pretty + stable) ---------- */
 let gasChart = null;
-const chartEmpty = document.getElementById('chartEmpty');
 
 function saveCache(rows){ try{ localStorage.setItem(GAS_LS_KEY, JSON.stringify(rows.slice(-300))); }catch(_){} }
 function loadCache(){ try{ return JSON.parse(localStorage.getItem(GAS_LS_KEY) || "[]"); }catch(_){ return []; } }
@@ -628,10 +732,9 @@ function buildGradient(ctx, color){
 }
 
 async function loadChart(forceFetch=false){
-  const canvas = document.getElementById('gasChart'); if(!canvas) return;
+  const canvas = el.gasChart; if(!canvas) return;
   const ctx = canvas.getContext('2d'); if(!ctx) return;
 
-  // 1) Grab rows (cache first for instant paint, then refresh)
   let rows = [];
   if (!forceFetch){ rows = loadCache(); setTimeout(()=>loadChart(true), 100); }
   else{
@@ -643,19 +746,14 @@ async function loadChart(forceFetch=false){
   }
   if (!rows.length) rows = loadCache();
 
-  // 2) Prepare series
   const labels = rows.map(h => new Date(h.time || h.ts).toLocaleString());
   const co2    = rows.map(h => h?.ppm?.co2     ?? null);
   const nh3    = rows.map(h => h?.ppm?.nh3     ?? null);
   const benz   = rows.map(h => h?.ppm?.benzene ?? null);
 
-  // 3) Toggle empty note
-  chartEmpty.style.display = rows.length ? "none" : "flex";
-
-  // 4) Cache
+  el.chartEmpty.style.display = rows.length ? "none" : "flex";
   if(rows.length) saveCache(rows);
 
-  // Colors to match your header/aesthetic
   const COL = { co2:"#22c55e", nh3:"#0ea5e9", benz:"#f59e0b" };
   const ds = [
     { label:"CO₂ (ppm)",      data:co2,  tension:.35, borderColor:COL.co2,  pointRadius:0, hitRadius:12, fill:true, backgroundColor:buildGradient(ctx, COL.co2) },
@@ -676,7 +774,6 @@ async function loadChart(forceFetch=false){
     animation:{ duration: 350 }
   };
 
-  // 5) Create once, update forever
   if (!gasChart){
     canvas.style.height = "280px";
     gasChart = new Chart(ctx, { type:"line", data:{ labels, datasets: ds }, options });
@@ -688,11 +785,10 @@ async function loadChart(forceFetch=false){
     gasChart.update();
   }
 }
-
-// first paint + periodic auto-refresh
 loadChart(false);
 setInterval(()=>loadChart(true), 60_000);
 </script>
+
 </body>
 </html>
     """
