@@ -1,7 +1,13 @@
-requests
-python-multipart
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi
 uvicorn[standard]
 pillow
-torch==2.4.0+cpu     --extra-index-url https://download.pytorch.org/whl/cpu
-torchvision==0.19.0+cpu  --extra-index-url https://download.pytorch.org/whl/cpu
+python-multipart
+requests
+gdown
+numpy
+
+# Torch CPU wheels (work on Python 3.12)
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
