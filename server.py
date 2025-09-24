@@ -274,7 +274,8 @@ def export_csv():
 @app.get("/summary")
 def summary():
     return _summarize(LAST)
-#UI
+
+# ---------- UI: Welcome ----------
 @app.get("/", response_class=HTMLResponse)
 def welcome():
     return """
@@ -319,8 +320,9 @@ def welcome():
   </div>
 </body>
 </html>
-
     """
+
+# ---------- UI: APP ----------
 @app.get("/app", response_class=HTMLResponse)
 def ui():
     return """
@@ -488,20 +490,110 @@ def ui():
 
 <script>
 "use strict";
+
 const badge = (t, c) => `<span class="pill ${c}">${t}</span>`;
 function toast(msg){ const el=document.getElementById('toast'); el.textContent=msg||'Done'; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1500); }
 
-// Vision + webcam functions (unchanged) ...
+// ---------- Status dots ----------
+function setStatus(which, state){
+  const el = (which === 'vision') ? document.getElementById('visionStatus') : document.getElementById('gasStatus');
+  if(!el) return;
+  const color = (which==='vision') ? '#22c55e' : '#0ea5e9';
+  el.classList.toggle('muted', state!=='busy');
+  el.innerHTML = `<span class="dot" style="background:${color}"></span> ${state==='busy'?'working…':'idle'}`;
+}
 
-// Gas form functions (unchanged) ...
+// ---------- Vision ----------
+function clearVision(){
+  preview.src=''; preview.style.display='none';
+  video.style.display='none'; canvas.style.display='none';
+  visionBadge.style.display='none'; visionTop.textContent='';
+}
+function clearAll(){
+  clearVision(); gasBadges.innerHTML=''; decision.className='big';
+  decision.textContent=''; raw.textContent='';
+}
+async function predictFile(){
+  const f = file.files[0]; if(!f){ alert('Choose an image'); return; }
+  preview.src = URL.createObjectURL(f); preview.style.display='block';
+  const fd = new FormData(); fd.append('image', f, f.name);
+  setStatus('vision','busy');
+  try{
+    const r = await fetch('/predict', { method:'POST', body:fd });
+    if(!r.ok) throw new Error(await r.text());
+    await refresh(); // normalized server output
+  }catch(e){ alert('Predict error: '+e); }
+  finally{ setStatus('vision','idle'); }
+}
 
-// ---------- Summary (with ADC badge) ----------
+let stream=null;
+async function startCam(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:true});
+    video.srcObject = stream; video.style.display='block';
+  }catch(e){ alert('Camera error: '+e); }
+}
+function stopCam(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } video.style.display='none'; }
+function snap(){
+  if(!stream){ alert('Start the webcam first'); return; }
+  const ctx = canvas.getContext('2d'); canvas.style.display='block';
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  canvas.toBlob(async b=>{
+    const fd = new FormData(); fd.append('image', b, 'snapshot.jpg');
+    setStatus('vision','busy');
+    try{
+      const r = await fetch('/predict',{method:'POST', body:fd});
+      if(!r.ok) throw new Error(await r.text());
+      await refresh();
+    }catch(e){ alert('Predict error: '+e); }
+    finally{ setStatus('vision','idle'); }
+  }, 'image/jpeg', 0.92);
+}
+
+// ---------- Gas ----------
+function safeInt(v, def){ const x = parseInt(v); return isNaN(x)?def:x; }
+function safeFloat(v, def){ const x = parseFloat(v); return isNaN(x)?def:x; }
+
+async function sendGas(){
+  const body = {
+    adc: safeInt(adc.value, 0),
+    vref: safeFloat(vref.value, 5.0), // UNO default 5V
+    rl: safeInt(rl.value, 10000),
+    r0: safeInt(r0.value, 10000),
+    adc_max: 1023                     // UNO 10-bit
+  };
+  setStatus('gas','busy');
+  try{
+    const r = await fetch('/gas', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if(!r.ok) throw new Error(await r.text());
+    await refresh();
+    await loadChart(true);
+  }catch(e){ alert('Gas send error: '+e); }
+  finally{ setStatus('gas','idle'); }
+}
+function resetGas(){ adc.value="1800"; vref.value="5.0"; rl.value="10000"; r0.value="10000"; }
+function preset(type){ if(type==='fresh'){ adc.value="1200"; r0.value="12000"; } if(type==='spoiled'){ adc.value="2500"; r0.value="8000"; } }
+async function saveSnap(){
+  try{
+    const r = await fetch('/cron/snapshot', {method:'POST'});
+    const j = await r.json();
+    if(j.ok){ await loadChart(true); toast('Snapshot saved ✔'); }
+    else    { alert('No reading to save yet. Send a gas reading first.'); }
+  }catch(e){ alert('Snapshot error: '+e); }
+}
+
+// ---------- Summary ----------
 async function refresh(){
   try {
     const r = await fetch('/summary', {cache:"no-store"});
     if(!r.ok) throw new Error(r.statusText);
     const s = await r.json();
 
+    // Vision (normalized)
     if (s.vision && s.vision.label){
       visionBadge.style.display='inline-block';
       const lbl = String(s.vision.label);
@@ -514,9 +606,11 @@ async function refresh(){
       visionBadge.style.display='none'; visionTop.textContent='';
     }
 
+    // Gas badges
     const g = s.gas_ppm || {}, gf = s.gas_flags || {};
+    const raw = s.gas_raw || {};
     gasBadges.innerHTML = [
-      badge(`ADC ${s.gas_raw?.adc ?? '—'}`, 'pill'),
+      badge(`ADC ${raw.adc ?? '—'}`, 'pill'),
       badge(`CO₂ ${g.co2??'—'} ppm`, gf.co2_high ? 'bad' : 'ok'),
       badge(`NH₃ ${g.nh3??'—'} ppm`, gf.nh3_high ? 'bad' : 'ok'),
       badge(`VOC ${g.alcohol??'—'} eq`, gf.voc_high ? 'warn' : 'ok')
@@ -524,7 +618,7 @@ async function refresh(){
 
     decision.className = 'big ' + (s.decision === 'SPOILED' ? 'bad' : 'ok');
     decision.textContent = s.decision || '';
-    raw.textContent = JSON.stringify(s, null, 2);
+    rawEl.textContent = JSON.stringify(s, null, 2);
 
   } catch(e){
     console.error("Refresh error", e);
@@ -532,11 +626,90 @@ async function refresh(){
     decision.textContent='⚠ Backend offline';
   }
 }
+const rawEl = document.getElementById('raw');
 refresh(); setInterval(refresh, 2000);
 
-// Chart.js load + update (unchanged except formatting) ...
+// ---------- Chart (pretty + stable) ----------
+let gasChart = null;
+const chartEmpty = document.getElementById('chartEmpty');
+const GAS_LS_KEY = "gas_history_cache_v1";
+
+function saveCache(rows){ try{ localStorage.setItem(GAS_LS_KEY, JSON.stringify(rows.slice(-300))); }catch(_){} }
+function loadCache(){ try{ return JSON.parse(localStorage.getItem(GAS_LS_KEY) || "[]"); }catch(_){ return []; } }
+
+function buildGradient(ctx, color){
+  const g = ctx.createLinearGradient(0,0,0,ctx.canvas.height);
+  g.addColorStop(0,  color + "AA");
+  g.addColorStop(1,  color + "00");
+  return g;
+}
+
+async function loadChart(forceFetch=false){
+  const canvas = document.getElementById('gasChart'); if(!canvas) return;
+  const ctx = canvas.getContext('2d'); if(!ctx) return;
+
+  // 1) Grab rows (cache first for instant paint, then refresh)
+  let rows = [];
+  if (!forceFetch){ rows = loadCache(); setTimeout(()=>loadChart(true), 100); }
+  else{
+    try{
+      const r = await fetch('/history', {cache:"no-store"});
+      const j = await r.json();
+      if(Array.isArray(j.history)) rows = j.history;
+    }catch(_){}
+  }
+  if (!rows.length) rows = loadCache();
+
+  // 2) Prepare series
+  const labels = rows.map(h => new Date(h.time || h.ts).toLocaleString());
+  const co2    = rows.map(h => h?.ppm?.co2     ?? null);
+  const nh3    = rows.map(h => h?.ppm?.nh3     ?? null);
+  const benz   = rows.map(h => h?.ppm?.benzene ?? null);
+
+  // 3) Toggle empty note
+  chartEmpty.style.display = rows.length ? "none" : "flex";
+
+  // 4) Cache
+  if(rows.length) saveCache(rows);
+
+  // Colors to match your header/aesthetic
+  const COL = { co2:"#22c55e", nh3:"#0ea5e9", benz:"#f59e0b" };
+  const ds = [
+    { label:"CO₂ (ppm)",      data:co2,  tension:.35, borderColor:COL.co2,  pointRadius:0, hitRadius:12, fill:true, backgroundColor:buildGradient(ctx, COL.co2) },
+    { label:"NH₃ (ppm)",      data:nh3,  tension:.35, borderColor:COL.nh3,  pointRadius:0, hitRadius:12, fill:true, backgroundColor:buildGradient(ctx, COL.nh3) },
+    { label:"Benzene (ppm)",  data:benz, tension:.35, borderColor:COL.benz, pointRadius:0, hitRadius:12, fill:true, backgroundColor:buildGradient(ctx, COL.benz) }
+  ];
+  const options = {
+    responsive:true, maintainAspectRatio:false,
+    interaction:{ mode:"index", intersect:false },
+    plugins:{
+      legend:{ position:"bottom", labels:{ boxWidth:12, font:{weight:700} } },
+      tooltip:{ backgroundColor:"rgba(0,0,0,.85)", titleFont:{weight:800} }
+    },
+    scales:{
+      x:{ ticks:{ autoSkip:true, maxTicksLimit:8 }, grid:{ display:false } },
+      y:{ beginAtZero:true, grid:{ color:"rgba(0,0,0,.06)" } }
+    },
+    animation:{ duration: 350 }
+  };
+
+  // 5) Create once, update forever
+  if (!gasChart){
+    canvas.style.height = "280px";
+    gasChart = new Chart(ctx, { type:"line", data:{ labels, datasets: ds }, options });
+  }else{
+    gasChart.data.labels = labels;
+    gasChart.data.datasets[0].data = co2;
+    gasChart.data.datasets[1].data = nh3;
+    gasChart.data.datasets[2].data = benz;
+    gasChart.update();
+  }
+}
+
+// first paint + periodic auto-refresh
+loadChart(false);
+setInterval(()=>loadChart(true), 60_000);
 </script>
 </body>
 </html>
     """
-
