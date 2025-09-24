@@ -133,8 +133,8 @@ async def predict(image: UploadFile = File(...)):
             CLASSIFY_URL,
             params={"api_key": ROBOFLOW_API_KEY},
             files={"file": ("image.jpg", data, image.content_type or "image/jpeg")},
-            timeout=40,
-        )
+            timeout=60,
+        ).json()
         resp.raise_for_status()           # <-- catch 4xx/5xx
         j = resp.json()
     except Exception as e:
