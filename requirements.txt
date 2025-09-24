@@ -8,6 +8,5 @@ requests
 gdown
 numpy
 
-# Torch CPU wheels (work on Python 3.12)
-torch==2.5.1+cpu
-torchvision==0.20.1+cpu
+torch+cpu
+torchvision+cpu
