@@ -1,183 +1,307 @@
-import os, io, csv, sqlite3
+import os
 from datetime import datetime, timedelta
+import sqlite3
 from pathlib import Path
-from io import BytesIO
-
+import io, csv
+import requests
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+# --- Local Image Classifier (PyTorch) ---
 import torch
 import torch.nn as nn
-from torchvision import transforms as T
 from PIL import Image
-import numpy as np
+from io import BytesIO
+from torchvision import transforms as T
+import numpy as np  # <-- needed for argmax
 
-# ---------------- Config ----------------
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 MODEL_PATH = os.getenv("MODEL_PATH", "spoilage_model.pth")
+# Order matters: index 0 -> "fresh", index 1 -> "spoiled"
 CLASS_NAMES = os.getenv("CLASS_NAMES", "fresh,spoiled").split(",")
 IMG_SIZE = int(os.getenv("IMG_SIZE", "224"))
-ARCH = os.getenv("ARCH", "").strip()
+ARCH = os.getenv("ARCH", "").strip()  # optional: "efficientnet_b0", "mobilenet_v2", etc.
 
+# Preprocessing: heavy & robust for real-world phone/webcam pics
 IMG_TX = T.Compose([
     T.Resize(IMG_SIZE, antialias=True),
     T.CenterCrop(IMG_SIZE),
     T.ToTensor(),
     T.ConvertImageDtype(torch.float32),
+    # ImageNet normalization (works best for most pretrained backbones)
     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
 _model = None
 
-def _rebuild_arch(num_classes: int):
+def _rebuild_arch_from_env(num_classes: int):
+    """Rebuild a known backbone if only a state_dict was saved."""
     if ARCH.lower() == "efficientnet_b0":
         from torchvision.models import efficientnet_b0
         m = efficientnet_b0(weights=None)
-        m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
+        in_feats = m.classifier[1].in_features
+        m.classifier[1] = nn.Linear(in_feats, num_classes)
         return m
     if ARCH.lower() == "mobilenet_v2":
         from torchvision.models import mobilenet_v2
         m = mobilenet_v2(weights=None)
-        m.classifier[1] = nn.Linear(m.classifier[1].in_features, num_classes)
+        in_feats = m.classifier[1].in_features
+        m.classifier[1] = nn.Linear(in_feats, num_classes)
         return m
-    raise RuntimeError("Set ARCH env if your .pth is a state_dict only.")
+    # Fallback tiny head on top of a generic conv net if you must
+    raise RuntimeError(
+        "ARCH not recognized and the checkpoint looks like a state_dict. "
+        "Set ARCH env to one of: efficientnet_b0, mobilenet_v2"
+    )
 
-def load_model():
+def load_local_model():
     global _model
     if _model is not None:
         return _model
-    try:  # TorchScript
-        _model = torch.jit.load(MODEL_PATH, map_location=DEVICE).eval().to(DEVICE)
+
+    try:
+        # Try TorchScript first (.pt/.pth scripted or traced)
+        _model = torch.jit.load(MODEL_PATH, map_location=DEVICE)
+        _model.eval().to(DEVICE)
         return _model
     except Exception:
         pass
-    obj = torch.load(MODEL_PATH, map_location=DEVICE)
-    if isinstance(obj, nn.Module):
-        _model = obj.eval().to(DEVICE)
-        return _model
-    m = _rebuild_arch(len(CLASS_NAMES))
-    m.load_state_dict(obj, strict=True)
-    _model = m.eval().to(DEVICE)
-    return _model
 
-def predict_image(img: Image.Image):
-    model = load_model()
+    # Try eager Module (torch.save(model, ...))
+    try:
+        obj = torch.load(MODEL_PATH, map_location=DEVICE)
+        if isinstance(obj, nn.Module):
+            _model = obj.eval().to(DEVICE)
+            return _model
+        # Looks like a state_dict -> need ARCH to rebuild
+        state_dict = obj
+        m = _rebuild_arch_from_env(num_classes=len(CLASS_NAMES))
+        m.load_state_dict(state_dict, strict=True)
+        _model = m.eval().to(DEVICE)
+        return _model
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model from {MODEL_PATH}: {e}")
+
+def _predict_pil(img: Image.Image):
+    """Return {'label': str, 'confidence': float, 'raw': {...}}"""
+    model = load_local_model()
     x = IMG_TX(img).unsqueeze(0).to(DEVICE)
+
     with torch.no_grad():
         logits = model(x)
-    if logits.ndim == 2 and logits.shape[1] == 1:
-        p = torch.sigmoid(logits)[0, 0].item()
-        probs = [1 - p, p]
-    else:
-        probs = torch.softmax(logits, dim=1)[0].tolist()
-    idx = int(np.argmax(probs))
-    return {
-        "label": CLASS_NAMES[idx].strip(),
-        "confidence": round(probs[idx] * 100.0, 1),
-        "raw": {"probs": {CLASS_NAMES[i].strip(): float(p) for i, p in enumerate(probs)}}
-    }
 
-# ---------------- FastAPI ----------------
+    # Handle heads:
+    #  - Binary sigmoid: [B,1]
+    #  - 2-class softmax: [B,2]
+    if logits.ndim == 2 and logits.shape[1] == 1:
+        prob_spoiled = torch.sigmoid(logits)[0, 0].item()
+        probs = [1.0 - prob_spoiled, prob_spoiled]
+    elif logits.ndim == 2 and logits.shape[1] == 2:
+        probs_t = torch.softmax(logits, dim=1)[0]
+        probs = [probs_t[0].item(), probs_t[1].item()]
+    else:
+        # If your head has >2 classes, just argmax and map to CLASS_NAMES order
+        probs_t = torch.softmax(logits, dim=1)[0]
+        probs = [p.item() for p in probs_t.tolist()]
+
+    # pick max
+    idx = int(np.argmax(probs))
+    label = CLASS_NAMES[idx].strip()
+    conf = float(probs[idx] * 100.0)
+
+    raw = {CLASS_NAMES[i].strip(): float(p) for i, p in enumerate(probs)}
+    return {"label": label, "confidence": round(conf, 1), "raw": {"probs": raw}}
+
+# ---------- FastAPI app + CORS ----------
 app = FastAPI(title="Fruit & Gas Cloud API")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],      # ok for demo; lock down in prod
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-LAST = {"vision": None, "vision_updated": None,
-        "gas": None, "gas_updated": None}
+# ---------- tiny in-memory cache ----------
+LAST = {
+    "vision": None,
+    "vision_updated": None,
+    "gas": None,
+    "gas_updated": None,
+}
 
-# ---------------- SQLite -----------------
+# ---------- SQLite (gas history) ----------
 DB_PATH = Path("data.db")
+
 def init_db():
     con = sqlite3.connect(DB_PATH)
-    c = con.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS gas_readings(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts TEXT NOT NULL,
-        co2 REAL, nh3 REAL, benzene REAL, alcohol REAL
-    )""")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_ts ON gas_readings(ts)")
-    con.commit(); con.close()
-init_db()
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gas_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,         -- ISO UTC string
+            co2 REAL, nh3 REAL, benzene REAL, alcohol REAL
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_gas_ts ON gas_readings(ts)")
+    con.commit()
+    con.close()
 
-def save_reading(ppm):
-    if not ppm: return
+def save_reading(ppm: dict):
+    if not ppm:
+        return
     con = sqlite3.connect(DB_PATH)
-    c = con.cursor()
-    c.execute("INSERT INTO gas_readings(ts,co2,nh3,benzene,alcohol) VALUES (?,?,?,?,?)",
-              (datetime.utcnow().isoformat(),
-               ppm.get("co2"), ppm.get("nh3"),
-               ppm.get("benzene"), ppm.get("alcohol")))
-    con.commit(); con.close()
+    cur = con.cursor()
+    cur.execute(
+        "INSERT INTO gas_readings (ts, co2, nh3, benzene, alcohol) VALUES (?, ?, ?, ?, ?)",
+        (datetime.utcnow().isoformat(),
+         ppm.get("co2"), ppm.get("nh3"),
+         ppm.get("benzene"), ppm.get("alcohol"))
+    )
+    con.commit()
+    con.close()
 
-def history_days(days=2):
+def load_history_last_days(days: int = 2):
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
     con = sqlite3.connect(DB_PATH)
-    c = con.cursor()
-    c.execute("""SELECT ts,co2,nh3,benzene,alcohol
-                FROM gas_readings WHERE ts>=? ORDER BY ts ASC""", (cutoff,))
-    rows = [{"time":ts,"ppm":{"co2":co2,"nh3":nh3,"benzene":b,"alcohol":a}}
-            for ts,co2,nh3,b,a in c.fetchall()]
+    cur = con.cursor()
+    cur.execute("""
+        SELECT ts, co2, nh3, benzene, alcohol
+        FROM gas_readings
+        WHERE ts >= ?
+        ORDER BY ts ASC
+    """, (cutoff,))
+    rows = cur.fetchall()
     con.close()
-    return rows
+    return [
+        {"time": ts, "ppm": {"co2": co2, "nh3": nh3, "benzene": benz, "alcohol": alc}}
+        for (ts, co2, nh3, benz, alc) in rows
+    ]
 
-# ---------------- Endpoints --------------
+init_db()
+
+# ---------- Classification helpers (legacy compat if needed) ----------
+def extract_top_class(resp_obj):
+    """
+    Robustly extract {"label":..., "confidence":...%} from legacy classification responses.
+    Supports both:
+      1) {"predictions":[{"class":"rotten_apple","confidence":0.91}, ...]}
+      2) {"predictions":{"rotten_apple":0.91,"fresh_apple":0.09}}
+    Returns: {"label": str, "confidence": float} or None
+    """
+    if not resp_obj:
+        return None
+    preds = resp_obj.get("predictions")
+    if preds is None:
+        return None
+
+    # Case A: list of dicts
+    if isinstance(preds, list):
+        preds_sorted = sorted(preds, key=lambda p: p.get("confidence", 0.0), reverse=True)
+        if preds_sorted:
+            return {
+                "label": preds_sorted[0].get("class", "?"),
+                "confidence": round(float(preds_sorted[0].get("confidence", 0.0)) * 100, 1)
+            }
+        return None
+
+    # Case B: dict mapping class -> confidence
+    if isinstance(preds, dict):
+        items = sorted(preds.items(), key=lambda kv: kv[1], reverse=True)
+        if items:
+            c, conf = items[0]
+            return {"label": str(c), "confidence": round(float(conf) * 100, 1)}
+
+    return None
+
+# ---------- /predict (Classification) ----------
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(image: UploadFile = File(...)):
+    """
+    Accept an uploaded image, run local PyTorch model, and return label/confidence.
+    Response example:
+      {"label":"spoiled","confidence":97.3,"raw":{"probs":{"fresh":0.027,"spoiled":0.973}}}
+    """
     try:
-        pil = Image.open(BytesIO(await file.read())).convert("RGB")
+        data = await image.read()
+        pil = Image.open(BytesIO(data)).convert("RGB")
     except Exception:
-        return JSONResponse({"error":"invalid_image"}, status_code=400)
+        return JSONResponse({"error": "invalid_image", "detail": "Could not read image"}, status_code=400)
+
     try:
-        out = predict_image(pil)
+        out = _predict_pil(pil)
+        # cache for your /summary if you keep that
         LAST["vision"] = {"predictions": out}
         LAST["vision_updated"] = datetime.utcnow().isoformat()
         return JSONResponse(out)
     except Exception as e:
-        return JSONResponse({"error":"inference_failed","detail":str(e)}, status_code=500)
+        return JSONResponse({"error": "inference_failed", "detail": str(e)}, status_code=500)
 
+# ---------- Gas model ----------
 class GasReading(BaseModel):
+    # either vrl or adc
     vrl: float | None = None
     adc: int | None = None
-    adc_max: int | None = 4095
-    vref: float | None = 3.3
+    adc_max: int | None = 4095      # ESP32 12-bit default; UI can override to 1023 for UNO
+    vref: float | None = 3.3        # ESP32 default; UI can override to 5.0 for UNO
     rl:   float | None = 10000.0
     rs:   float | None = None
     r0:   float | None = None
 
-def ppm_from_ratio(ratio,a,b):
-    if ratio is None or ratio<=0: return 0.0
-    return max(0.0, a*(ratio**b))
+def _ppm_from_ratio(ratio: float, a: float, b: float) -> float:
+    if ratio is None or ratio <= 0:
+        return 0.0
+    return max(0.0, a * (ratio ** b))
 
 @app.post("/gas")
 def gas(g: GasReading):
+    """
+    Accept gas info from ESP32/UNO (or the manual UI),
+    compute Rs/ratio/ppm, update LAST, and persist to DB.
+    """
     VREF = float(g.vref or 3.3)
     RL   = float(g.rl or 10000.0)
-    used_adc = g.adc
+
+    used_adc = None
+    used_adc_max = int(g.adc_max or 4095)
+
+    # If only ADC is provided, compute VRL from it.
     if g.vrl is None and g.adc is not None:
-        g.vrl = (g.adc/float(g.adc_max or 4095))*VREF
+        used_adc = int(g.adc)
+        g.vrl = (float(used_adc) / float(used_adc_max)) * VREF
+
     if g.vrl is None and g.rs is None:
-        return JSONResponse({"error":"Send vrl, adc or rs"}, status_code=400)
-    rs = float(g.rs) if g.rs is not None else ((VREF - g.vrl) * RL) / max(0.001, g.vrl)
+        return JSONResponse({"error": "Send at least one of: vrl, adc, or rs."}, status_code=400)
+
+    # Rs from divider if not provided
+    rs = float(g.rs) if g.rs is not None else ((VREF - float(g.vrl)) * RL) / max(0.001, float(g.vrl))
     r0 = float(g.r0) if g.r0 is not None else rs
     ratio = rs / max(1e-6, r0)
+
     data = {
-        "vrl": round(g.vrl,3),
-        "rs": round(rs,1),
-        "r0": round(r0,1),
-        "ratio": round(ratio,3),
+        "vrl": round(float(g.vrl), 3) if g.vrl is not None else None,
+        "rs": round(rs, 1),
+        "r0": round(r0, 1),
+        "ratio": round(ratio, 3),
         "ppm": {
-            "co2":     round(ppm_from_ratio(ratio,116.6021,-2.7690),1),
-            "nh3":     round(ppm_from_ratio(ratio,102.6940,-2.4880),1),
-            "benzene": round(ppm_from_ratio(ratio,76.63,-2.1680),1),
-            "alcohol": round(ppm_from_ratio(ratio,77.255,-3.18),1),
+            "co2":     round(_ppm_from_ratio(ratio, 116.6021, -2.7690), 1),
+            "nh3":     round(_ppm_from_ratio(ratio, 102.6940, -2.4880), 1),
+            "benzene": round(_ppm_from_ratio(ratio, 76.63,   -2.1680), 1),
+            "alcohol": round(_ppm_from_ratio(ratio, 77.255,  -3.18),   1),
         },
-        "raw": {"adc": used_adc, "adc_max": g.adc_max, "vref": VREF, "rl": RL, "r0": r0}
+        "raw": {  # keep raw inputs so UI can display ADC, etc.
+            "adc": used_adc,
+            "adc_max": used_adc_max,
+            "vref": VREF,
+            "rl": RL,
+            "r0": r0
+        }
     }
+
     LAST["gas"] = data
     LAST["gas_updated"] = datetime.utcnow().isoformat()
     save_reading(data["ppm"])
@@ -185,54 +309,73 @@ def gas(g: GasReading):
 
 @app.post("/cron/snapshot")
 def cron_snapshot():
+    """Store whatever is in LAST['gas'] right now."""
     if not LAST.get("gas") or not LAST["gas"].get("ppm"):
-        return {"ok": False, "error": "No gas reading yet"}
+        return {"ok": False, "error": "No gas reading to snapshot yet."}
     save_reading(LAST["gas"]["ppm"])
     return {"ok": True, "saved": LAST["gas"]["ppm"]}
 
 @app.get("/history")
 def history():
-    return {"history": history_days(2)}
+    """Return last 2 days of gas readings from DB."""
+    return {"history": load_history_last_days(days=2)}
 
-def summarize():
-    vpred = LAST.get("vision", {}).get("predictions")
-    ppm = (LAST.get("gas") or {}).get("ppm", {})
-    co2, nh3 = ppm.get("co2"), ppm.get("nh3")
-    benz, alc = ppm.get("benzene"), ppm.get("alcohol")
-    co2_hi = co2 is not None and co2 >= 2000
-    nh3_hi = nh3 is not None and nh3 >= 15
-    voc_hi = (benz or 0) >= 5 or (alc or 0) >= 10
-    spoiled = (vpred and "spoiled" in vpred["label"].lower()) or co2_hi or nh3_hi or voc_hi
+# ---------- Summary (vision + gas) ----------
+def _summarize(last: dict) -> dict:
+    pred = None
+    v = last.get("vision")
+    if isinstance(v, dict) and "predictions" in v and isinstance(v["predictions"], dict):
+        pred = v["predictions"]  # already {"label","confidence",...}
+
+    gas_ppm = (last.get("gas") or {}).get("ppm", {})
+    gas_raw = (last.get("gas") or {}).get("raw", {})
+
+    co2  = gas_ppm.get("co2")
+    nh3  = gas_ppm.get("nh3")
+    benz = gas_ppm.get("benzene")
+    alco = gas_ppm.get("alcohol")
+
+    # Thresholds to tune with real data
+    co2_hi = (co2 is not None) and (co2 >= 2000)
+    nh3_hi = (nh3 is not None) and (nh3 >= 15)
+    voc_hi = (benz or 0) >= 5 or (alco or 0) >= 10
+
+    # Vision rule: label containing 'spoiled' (or legacy 'rotten')
+    model_rotten = bool(pred and isinstance(pred.get("label"), str) and (("spoiled" in pred["label"].lower()) or ("rotten" in pred["label"].lower())))
+    spoiled = model_rotten or co2_hi or nh3_hi or voc_hi
+
     return {
-        "vision": vpred,
-        "gas_ppm": ppm,
+        "vision": pred,  # e.g. {"label":"spoiled","confidence":91.5}
+        "gas_ppm": {"co2": co2, "nh3": nh3, "benzene": benz, "alcohol": alco},
+        "gas_raw": gas_raw,
         "gas_flags": {"co2_high": co2_hi, "nh3_high": nh3_hi, "voc_high": voc_hi},
-        "decision": "SPOILED" if spoiled else "FRESH"
+        "decision": "SPOILED" if spoiled else "FRESH",
     }
-
-@app.get("/summary")
-def summary():
-    return summarize()
 
 @app.get("/export.csv")
 def export_csv():
-    rows = history_days(2)
+    rows = load_history_last_days(days=2)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["timestamp_utc","co2_ppm","nh3_ppm","benzene_ppm","alcohol_eq"])
+    w.writerow(["timestamp_utc", "co2_ppm", "nh3_ppm", "benzene_ppm", "alcohol_eq"])
     for r in rows:
-        p = r["ppm"]
-        w.writerow([r["time"], p.get("co2"), p.get("nh3"), p.get("benzene"), p.get("alcohol")])
-    return HTMLResponse(buf.getvalue(), media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="gas_last_2_days.csv"'})
+        ts = r["time"]
+        ppm = r["ppm"] or {}
+        w.writerow([ts, ppm.get("co2"), ppm.get("nh3"), ppm.get("benzene"), ppm.get("alcohol")])
+    csv_data = buf.getvalue()
+    return HTMLResponse(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="gas_last_2_days.csv"'}
+    )
+
+@app.get("/summary")
+def summary():
+    return _summarize(LAST)
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "time": datetime.utcnow().isoformat()}
-
-@app.get("/", response_class=HTMLResponse)
-def root():
-    return "<h1>Fruit & Gas API is running</h1>"
 
 # ---------- UI pages ----------
 @app.get("/", response_class=HTMLResponse)
