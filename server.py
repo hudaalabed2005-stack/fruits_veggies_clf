@@ -119,42 +119,70 @@ def extract_top_class(resp_obj):
 
     return None
 
-# /predict
+# ---------- /predict (Classification) ----------
 @app.post("/predict")
 async def predict(image: UploadFile = File(...)):
     """
-    Accept an uploaded image, forward to Roboflow Classification, cache the result.
-    Returns 200 with Roboflow JSON on success,
-    or 502 with {"error": "..."} on failure.
+    Accept an uploaded image, call Roboflow Classification,
+    cache the raw response, return normalized JSON or a helpful error.
     """
     data = await image.read()
     try:
-        resp = requests.post(
-            CLASSIFY_URL,
-            params={"api_key": ROBOFLOW_API_KEY},
-            files={"file": ("image.jpg", data, image.content_type or "image/jpeg")},
-            timeout=60,
-        ).json()
-        resp.raise_for_status()           # <-- catch 4xx/5xx
+        # Prefer Authorization header (more reliable than ?api_key=...)
+        headers = {
+            "Authorization": f"Bearer {ROBOFLOW_API_KEY}",
+            "Accept": "application/json"
+        }
+        files = {"file": ("image.jpg", data, image.content_type or "image/jpeg")}
+
+        resp = requests.post(CLASSIFY_URL, headers=headers, files=files, timeout=60)
+
+        # Try to extract Roboflow error message if possible
+        if resp.status_code == 403:
+            return JSONResponse(
+                {
+                    "error": "roboflow_403",
+                    "detail": "Roboflow classification forbidden (403).",
+                    "hints": [
+                        "Check ROBOFLOW_API_KEY (regenerate if necessary).",
+                        "Confirm the model path: "
+                        f"{'WORKSPACE/' if WORKSPACE else ''}{PROJECT}/{VERSION}",
+                        "Make sure the model is deployed for Hosted API.",
+                        "Ensure your key has Hosted API permissions and quota."
+                    ],
+                    "endpoint": CLASSIFY_URL
+                },
+                status_code=502
+            )
+
+        resp.raise_for_status()
         j = resp.json()
-    except Exception as e:
-        # bubble an explicit error to the UI
-        err = {"error": f"Roboflow classify failed: {e}"}
-        LAST["vision"] = err              # still cache so /summary is consistent
-        LAST["vision_updated"] = datetime.utcnow().isoformat()
-        return JSONResponse(err, status_code=502)
+
+    except requests.exceptions.RequestException as e:
+        # Network or HTTP error
+        return JSONResponse(
+            {"error": "roboflow_request_failed", "detail": str(e), "endpoint": CLASSIFY_URL},
+            status_code=502
+        )
+    except ValueError:
+        # Not JSON
+        return JSONResponse(
+            {"error": "roboflow_non_json", "detail": resp.text[:500], "endpoint": CLASSIFY_URL},
+            status_code=502
+        )
 
     LAST["vision"] = j
     LAST["vision_updated"] = datetime.utcnow().isoformat()
     return JSONResponse(j)
+
 
 #Gas model
 class GasReading(BaseModel):
     # either vrl or adc
     vrl: float | None = None
     adc: int | None = None
-    adc_max: int | None = 1023      # default UNO 10-bit
-    vref: float | None = 5.0        # default UNO 5.0V reference
+    adc_max: int | None = 4095      # default UNO 10-bit
+    vref: float | None = 3.3        # default UNO 5.0V reference
     rl:   float | None = 10000.0
     rs:   float | None = None
     r0:   float | None = None
@@ -170,12 +198,12 @@ def gas(g: GasReading):
     Accept gas info from ESP32/UNO (or the manual UI),
     compute Rs/ratio/ppm, update LAST, and persist to DB.
     """
-    VREF = float(g.vref or 5.0)
+    VREF = float(g.vref or3.3)
     RL   = float(g.rl or 10000.0)
 
     # If only ADC is provided, compute VRL from it.
     if g.vrl is None and g.adc is not None:
-        adc_max = int(g.adc_max or 1023)           # UNO default
+        adc_max = int(g.adc_max or 4095)           # UNO default
         g.vrl = (float(g.adc) / float(adc_max)) * VREF
 
     if g.vrl is None and g.rs is None:
@@ -453,7 +481,7 @@ def ui():
       <h2>2) Gas Sensor Reading <span id="gasStatus" class="status muted"><span class="dot" style="background:#0ea5e9"></span> idle</span></h2>
       <div class="row" style="margin-bottom:8px">
         ADC <input id="adc" type="number" value="1800" autocomplete="off" />
-        Vref <input id="vref" type="number" value="5.0" step="0.1" autocomplete="off" />
+        Vref <input id="vref" type="number" value="3.3" step="0.1" autocomplete="off" />
         RL(Ω) <input id="rl" type="number" value="10000" autocomplete="off" />
         R0(Ω) <input id="r0" type="number" value="10000" autocomplete="off" />
         <button type="button" onclick="sendGas()">📤 Send</button>
@@ -654,10 +682,10 @@ function snap(){
 async function sendGas(){
   const body = {
     adc: parseInt(el.adc.value || '0'),
-    vref: parseFloat(el.vref.value || '5.0'), // UNO default 5V
+    vref: parseFloat(el.vref.value || '3.3'), // 
     rl: parseInt(el.rl.value || '10000'),
     r0: parseInt(el.r0.value || '10000'),
-    adc_max: 1023                           // UNO 10-bit
+    adc_max: 4095                      
   };
   setStatus('gas','busy');
   try{
@@ -671,7 +699,7 @@ async function sendGas(){
     await loadChart(true);
   }finally{ setStatus('gas','idle'); }
 }
-function resetGas(){ el.adc.value="1800"; el.vref.value="5.0"; el.rl.value="10000"; el.r0.value="10000"; }
+function resetGas(){ el.adc.value="1800"; el.vref.value="3.3"; el.rl.value="10000"; el.r0.value="10000"; }
 function preset(type){ if(type==='fresh'){ el.adc.value="1200"; el.r0.value="12000"; } if(type==='spoiled'){ el.adc.value="2500"; el.r0.value="8000"; } }
 async function saveSnap(){
   const r = await fetch('/cron/snapshot', {method:'POST'});
