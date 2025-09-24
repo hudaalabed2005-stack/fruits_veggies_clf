@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 # Roboflow
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
-PROJECT = "fresh-rotten-xvon4-9tefx"
+PROJECT = "fresh-or-rotten-detection-briat/1" 
 VERSION = "1"
 DETECT_URL = f"https://detect.roboflow.com/{PROJECT}/{VERSION}"
 
@@ -330,7 +330,7 @@ def ui():
 <body>
   <header>
     <h1>🍎 Fruit Freshness & Gas Detector</h1>
-    <p>Simple, clear interface — upload, predict, and view gas-based decision</p>
+    <p>Upload, predict, and view gas-based decision</p>
   </header>
 
   <div class="container">
