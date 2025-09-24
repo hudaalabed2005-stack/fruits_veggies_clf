@@ -122,18 +122,31 @@ def extract_top_class(resp_obj):
 # /predict
 @app.post("/predict")
 async def predict(image: UploadFile = File(...)):
-    """Accept an uploaded image, forward to Roboflow Classification, cache the result."""
+    """
+    Accept an uploaded image, forward to Roboflow Classification, cache the result.
+    Returns 200 with Roboflow JSON on success,
+    or 502 with {"error": "..."} on failure.
+    """
     data = await image.read()
-    resp = requests.post(
-        CLASSIFY_URL,
-        params={"api_key": ROBOFLOW_API_KEY},
-        files={"file": ("image.jpg", data, image.content_type or "image/jpeg")},
-        timeout=60,
-    ).json()
+    try:
+        resp = requests.post(
+            CLASSIFY_URL,
+            params={"api_key": ROBOFLOW_API_KEY},
+            files={"file": ("image.jpg", data, image.content_type or "image/jpeg")},
+            timeout=40,
+        )
+        resp.raise_for_status()           # <-- catch 4xx/5xx
+        j = resp.json()
+    except Exception as e:
+        # bubble an explicit error to the UI
+        err = {"error": f"Roboflow classify failed: {e}"}
+        LAST["vision"] = err              # still cache so /summary is consistent
+        LAST["vision_updated"] = datetime.utcnow().isoformat()
+        return JSONResponse(err, status_code=502)
 
-    LAST["vision"] = resp
+    LAST["vision"] = j
     LAST["vision_updated"] = datetime.utcnow().isoformat()
-    return JSONResponse(resp)
+    return JSONResponse(j)
 
 #Gas model
 class GasReading(BaseModel):
